@@ -8,7 +8,7 @@ The goal of this policy is narrow: people should be able to tell the official Li
 
 - **Self-host Liste** and refer to your instance as "Liste (self-hosted)" or say that it is "powered by Liste".
 - **Describe your fork or project** as being based on, derived from, or compatible with Liste, in plain text.
-- **Link to** liste.app and to this repository.
+- **Link to** this repository.
 - **Use the name** in articles, reviews, tutorials, package descriptions, and other factual references.
 - **Keep the name in the source code** you redistribute, including crate names, module paths, identifiers, and this policy.
 
@@ -26,4 +26,4 @@ If you distribute a modified version, please choose a different name and icon. Y
 
 ## Questions
 
-If you are not sure whether a use is covered, open a discussion on the repository or email hello@liste.app.
+If you are not sure whether a use is covered, open a discussion on the repository.

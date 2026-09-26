@@ -16,7 +16,6 @@ edition = "2024"
 rust-version = "1.94"
 license = "AGPL-3.0-only"
 repository = "https://github.com/liste-app/liste"
-homepage = "https://liste.app"
 publish = false
 
 [workspace.dependencies]

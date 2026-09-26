@@ -60,6 +60,10 @@ Not yet. When Liste reaches its first release, `deploy/self-host/` will contain 
 
 Liste Cloud is the hosted service run by the maintainers and is what funds development. Self-hosters get every feature; Cloud sells convenience. If you self-host and want to support the project anyway, see [GitHub Sponsors](https://github.com/sponsors/liste-app).
 
+## Support
+
+Questions go to [GitHub Discussions](https://github.com/liste-app/liste/discussions); bugs go to [Issues](https://github.com/liste-app/liste/issues).
+
 ## Security
 
 Liste is end-to-end encrypted. Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).

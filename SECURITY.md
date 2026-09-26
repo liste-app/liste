@@ -6,18 +6,11 @@ Liste is an end-to-end encrypted product. A security issue in the core, the sync
 
 Please do not open a public issue for anything security-related.
 
-Use one of these channels:
-
-- **GitHub private vulnerability reporting** on this repository (Security tab, "Report a vulnerability"). This is the preferred channel.
-- **Email:** security@liste.app.
+Use **GitHub private vulnerability reporting** on this repository (Security tab, "Report a vulnerability").
 
 Include enough detail to reproduce the issue: affected component, version or commit, steps, and impact. If you have a proof of concept, attach it.
 
 We will acknowledge a report within three working days, keep you informed as we investigate, and credit you in the release notes when the fix ships unless you ask otherwise.
-
-### PGP
-
-A PGP key for encrypted email reports will be published in this file, and at `https://liste.app/.well-known/security.txt`, before the first public beta. Until then, please use GitHub private vulnerability reporting for anything sensitive.
 
 ## Scope
 
