@@ -1,6 +1,15 @@
 //! Per-language vocabulary. The parser's structure is fixed; a language is
 //! a table of the words it uses for each concept. Numbers, dates, and
 //! times are locale-driven and live outside the table.
+//!
+//! Two rules that every language table inherits:
+//! - In a 12-hour locale, an hour without `am`/`pm` is read only when it
+//!   follows `at` or has minutes (`at 5`, `5:30`, `at 5:30`): 1 to 6 mean
+//!   PM, 7 to 11 mean AM, 12 means noon. A lone number stays in the title.
+//! - A weekday abbreviation (every entry after the first in `weekdays`) is
+//!   a date only with a signal: preceded by an `on`, `next`, `every`, or
+//!   `due` word, followed by a time, or at the end of the line. Full names
+//!   parse anywhere.
 
 use crate::model::Priority;
 
@@ -119,7 +128,7 @@ pub static ENGLISH: Grammar = Grammar {
     in_: &["in"],
     on: &["on"],
     at: &["at"],
-    due: &["due", "by"],
+    due: &["due", "by", "until"],
     of: &["of"],
     the: &["the"],
     and: &["and", "&"],

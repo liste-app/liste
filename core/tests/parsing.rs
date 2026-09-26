@@ -99,10 +99,14 @@ fn ambiguous_dates_resolve_deterministically() {
     );
     // Neither is valid: text.
     assert!(parse("13/13", &us).due.is_none());
-    // A bare hour in a 12-hour locale is ambiguous and stays in the title.
+    // A bare hour in a 12-hour locale after "at" follows the fixed rule
+    // (1 to 6 PM); without "at" or minutes it stays in the title.
     let at5 = parse("meet at 5", &us);
-    assert!(at5.due.is_none());
-    assert_eq!(at5.title, "meet at 5");
+    assert_eq!(at5.due.unwrap().time, Some(Time::constant(17, 0, 0, 0)));
+    assert_eq!(at5.title, "meet");
+    let bare = parse("meet 5", &us);
+    assert!(bare.due.is_none());
+    assert_eq!(bare.title, "meet 5");
     let at5 = parse("meet at 5", &eu);
     assert_eq!(at5.due.unwrap().time, Some(Time::constant(5, 0, 0, 0)));
     assert_eq!(at5.title, "meet");

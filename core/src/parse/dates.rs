@@ -52,19 +52,30 @@ fn ordinal_suffix_at(tokens: &[Token], i: usize, g: &Grammar) -> usize {
     )
 }
 
-/// Try a date phrase at `i`. Optional `on`/`due`/`by` prefixes are consumed
-/// only when a date follows.
+/// Try a date phrase at `i`. Optional `on`/`due`/`by`/`until` prefixes are
+/// consumed only when a date follows.
 pub fn date(tokens: &[Token], i: usize, ctx: &Context) -> Option<(usize, DateMatch)> {
     let g = ctx.grammar;
     let mut start = i;
-    if word(tokens, i, g.on) || word(tokens, i, g.due) {
+    let prefixed = word(tokens, i, g.on) || word(tokens, i, g.due);
+    if prefixed {
         start = i + 1;
     }
-    let (n, m) = date_body(tokens, start, ctx)?;
+    let (n, m) = date_body(tokens, start, ctx, prefixed)?;
     Some((start - i + n, m))
 }
 
-fn date_body(tokens: &[Token], i: usize, ctx: &Context) -> Option<(usize, DateMatch)> {
+/// Whether `word` is a weekday's full name rather than an abbreviation.
+fn is_full_weekday(g: &Grammar, w: usize, word: &str) -> bool {
+    g.weekdays[w].first().is_some_and(|full| *full == word)
+}
+
+fn date_body(
+    tokens: &[Token],
+    i: usize,
+    ctx: &Context,
+    prefixed: bool,
+) -> Option<(usize, DateMatch)> {
     let g = ctx.grammar;
     let today = ctx.today();
     let t = tokens.get(i)?;
@@ -119,6 +130,16 @@ fn date_body(tokens: &[Token], i: usize, ctx: &Context) -> Option<(usize, DateMa
         return None;
     }
     if let Some(w) = g.weekday(&t.lower) {
+        // An abbreviation ("sat") is a date only with a signal: a prefix
+        // such as "on" or "by", a time right after it, or the end of the
+        // line. "buy sun cream" stays a title; full names parse anywhere.
+        let signal = is_full_weekday(g, w, &t.lower)
+            || prefixed
+            || i + 1 == tokens.len()
+            || time(tokens, i + 1, ctx).is_some();
+        if !signal {
+            return None;
+        }
         let weekday = Weekday::from_monday_zero_offset(w as i8).ok()?;
         return Some((
             1,
@@ -290,7 +311,7 @@ fn date_body(tokens: &[Token], i: usize, ctx: &Context) -> Option<(usize, DateMa
     }
     // "the 5th of <month>" is reached through the branch above once "the" is skipped.
     if t.is_any(g.the)
-        && let Some((n, m)) = date_body(tokens, i + 1, ctx)
+        && let Some((n, m)) = date_body(tokens, i + 1, ctx, prefixed)
         && matches!(m.source, DateSource::Explicit)
     {
         return Some((n + 1, m));
@@ -422,9 +443,12 @@ fn time_body(tokens: &[Token], i: usize, ctx: &Context, prefixed: bool) -> Optio
             }
             match ctx.locale.hour_cycle {
                 HourCycle::H24 => hour,
-                // Ambiguous on a 12-hour clock unless clearly 24-hour.
+                // Clearly 24-hour.
                 HourCycle::H12 if hour == 0 || hour > 12 => hour,
-                HourCycle::H12 => return None,
+                // The 12-hour rule for an hour that follows "at" or has
+                // minutes: 1 to 6 are PM, 7 to 11 are AM, 12 is noon.
+                HourCycle::H12 if (1..=6).contains(&hour) => hour + 12,
+                HourCycle::H12 => hour,
             }
         }
     };

@@ -195,10 +195,55 @@ title = "dentist"
 date = "2026-03-13"
 time = "14:00"
 
+# Weekday abbreviations need a date signal; full names do not.
 [[case]]
 input = "buy sun cream"
-title = "buy cream"
-date = "2026-03-08"
+title = "buy sun cream"
+
+[[case]]
+input = "gym sat"
+title = "gym"
+date = "2026-03-07"
+
+[[case]]
+input = "gym on sat"
+title = "gym"
+date = "2026-03-07"
+
+[[case]]
+input = "sat 9am"
+title = ""
+date = "2026-03-07"
+time = "09:00"
+
+[[case]]
+input = "gym by fri"
+title = "gym"
+date = "2026-03-06"
+
+[[case]]
+input = "gym until fri"
+title = "gym"
+date = "2026-03-06"
+
+[[case]]
+input = "gym next sat"
+title = "gym"
+date = "2026-03-14"
+
+[[case]]
+input = "mon amour"
+title = "mon amour"
+
+[[case]]
+input = "wed to the sea"
+title = "wed to the sea"
+
+[[case]]
+input = "gym saturday morning run"
+title = "gym run"
+date = "2026-03-07"
+time = "09:00"
 
 # --- relative -------------------------------------------------------------
 [[case]]
@@ -531,7 +576,9 @@ time = "18:00"
 
 [[case]]
 input = "standup 9:00"
-title = "standup 9:00"
+title = "standup"
+date = "2026-03-05"
+time = "09:00"
 
 [[case]]
 input = "standup 9:00"
@@ -540,9 +587,12 @@ date = "2026-03-05"
 time = "09:00"
 locale = "eu"
 
+# 12-hour rule: after "at" or with minutes, 1-6 are PM, 7-11 AM, 12 noon.
 [[case]]
 input = "standup at 5"
-title = "standup at 5"
+title = "standup"
+date = "2026-03-04"
+time = "17:00"
 
 [[case]]
 input = "standup at 5"
@@ -550,6 +600,58 @@ title = "standup"
 date = "2026-03-05"
 time = "05:00"
 locale = "eu"
+
+[[case]]
+input = "standup at 6"
+title = "standup"
+date = "2026-03-04"
+time = "18:00"
+
+[[case]]
+input = "standup at 7"
+title = "standup"
+date = "2026-03-05"
+time = "07:00"
+
+[[case]]
+input = "standup at 11"
+title = "standup"
+date = "2026-03-04"
+time = "11:00"
+
+[[case]]
+input = "standup at 12"
+title = "standup"
+date = "2026-03-04"
+time = "12:00"
+
+[[case]]
+input = "standup 12:30"
+title = "standup"
+date = "2026-03-04"
+time = "12:30"
+
+[[case]]
+input = "standup at 5:30"
+title = "standup"
+date = "2026-03-04"
+time = "17:30"
+
+[[case]]
+input = "standup 6:45"
+title = "standup"
+date = "2026-03-04"
+time = "18:45"
+
+[[case]]
+input = "standup 5"
+title = "standup 5"
+
+[[case]]
+input = "standup at 1"
+title = "standup"
+date = "2026-03-04"
+time = "13:00"
 
 [[case]]
 input = "standup at 17"

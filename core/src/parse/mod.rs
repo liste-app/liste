@@ -15,8 +15,12 @@
 //! - Month/day order in `1/5` follows the locale, unless only one order is
 //!   a valid date. Both valid, locale decides; neither valid, it is text.
 //! - Hours follow the locale's clock: in a 24-hour locale `at 5` is 05:00
-//!   and `5:30` is 05:30; in a 12-hour locale a time without `am`/`pm` is
-//!   ambiguous unless its hour is 0 or over 12, and stays in the title.
+//!   and `5:30` is 05:30. In a 12-hour locale an hour without `am`/`pm`
+//!   is read only after `at` or with minutes, as 1 to 6 PM, 7 to 11 AM,
+//!   and 12 noon; a lone number stays in the title.
+//! - A weekday abbreviation such as `sat` is a date only next to a signal
+//!   (`on`, `by`, `next`, a following time, or the end of the line); full
+//!   names parse anywhere.
 //! - The first date, time, list, priority, and rule win; a second one of
 //!   the same kind stays in the title.
 //! - Anything not matched by these rules is title text. Any input yields
