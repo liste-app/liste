@@ -25,6 +25,12 @@ public enum Preferences {
         set { defaults.set(newValue, forKey: "defaultList") }
     }
 
+    /// The main window's view, "list" or "board", kept across launches.
+    public static var viewMode: String {
+        get { defaults.string(forKey: "viewMode") ?? "list" }
+        set { defaults.set(newValue, forKey: "viewMode") }
+    }
+
     /// Kanban grouping: "status", "priority", "list", or "tag".
     public static var kanbanGroup: String {
         get { defaults.string(forKey: "kanbanGroup") ?? "status" }
@@ -37,14 +43,6 @@ public enum Preferences {
 
     public static func setKanbanColumnOrder(_ order: [String], for group: String) {
         defaults.set(order, forKey: "kanbanOrder.\(group)")
-    }
-
-    public static func kanbanCollapsed(for group: String) -> Set<String> {
-        Set(defaults.stringArray(forKey: "kanbanCollapsed.\(group)") ?? [])
-    }
-
-    public static func setKanbanCollapsed(_ set: Set<String>, for group: String) {
-        defaults.set(Array(set).sorted(), forKey: "kanbanCollapsed.\(group)")
     }
 
     /// Subtask groups the person collapsed, by parent task id.
