@@ -1,7 +1,9 @@
 //! Encrypt and decrypt of a typical op, so the sync path's overhead is
-//! known. Reported, not enforced.
+//! known. Threshold (p95): 50 µs each.
 
 mod common;
+
+use std::time::Duration;
 
 use liste_core::crypto::{Keyring, MemoryKeyStore};
 use liste_core::ids::Id;
@@ -35,11 +37,20 @@ fn main() {
         let back = decrypt.time(|| keyring.decrypt_op(&e).unwrap());
         assert_eq!(back, op);
     }
-    encrypt.report("encrypt_op (typical set-title op)");
-    decrypt.report("decrypt_op (typical set-title op)");
+    let mut failures = Vec::new();
+    encrypt.check(
+        "encrypt_op (typical set-title op)",
+        Duration::from_micros(50),
+        &mut failures,
+    );
+    decrypt.check(
+        "decrypt_op (typical set-title op)",
+        Duration::from_micros(50),
+        &mut failures,
+    );
     println!(
         "op size: {plain_len} bytes plain, {sealed_len} bytes sealed, {} bytes overhead",
         sealed_len - plain_len
     );
-    common::finish(Vec::new());
+    common::finish(failures);
 }
