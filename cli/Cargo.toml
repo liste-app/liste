@@ -17,3 +17,9 @@ liste-ipc.workspace = true
 # The core is linked only for `liste daemon`, which is a host, not a client.
 liste-core.workspace = true
 clap.workspace = true
+ctrlc.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
