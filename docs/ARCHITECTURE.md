@@ -600,6 +600,8 @@ This section covers **Liste Cloud**, the maintainers' hosted service. Self-hosti
 4. Desktop and mobile: upload to stores and R2; publish appcast/appinstaller last so clients only see an update once the server that supports it is live.
 5. Client versions must tolerate one server version of skew in each direction (Section 6 schema evolution makes this natural).
 
+Before tagging, bump the bundled time-zone database crate (`jiff-tzdb`, pulled in by `jiff`) so every release ships current zone rules; the core does not read the operating system's zone data.
+
 ### Cloudflare tooling
 The Cloudflare CLI (`wrangler`) and Cloudflare's documentation are the reference for creating R2 buckets, deploying Workers, and inspecting logs. **Check the current documentation before relying on any limit or API.** Cloudflare's platform moves quickly; verify, then build.
 
