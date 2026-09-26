@@ -6,7 +6,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 publish.workspace = true
 
 [lib]
@@ -26,8 +25,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 # On the web the core runs in a dedicated worker and stores the database in
-# OPFS through the sahpool VFS, with the IndexedDB VFS as fallback
-# (Section 10). rusqlite 0.40 pulls in sqlite-wasm-rs 0.5; the matching VFS
-# crate is sqlite-wasm-vfs 0.2, which ships both VFSes with no feature flags.
+# OPFS through the sahpool VFS only (Section 10). Browsers without OPFS are
+# unsupported for persistence; no IndexedDB VFS is used or reintroduced.
+# rusqlite 0.39 pulls in sqlite-wasm-rs 0.5; the matching VFS crate is
+# sqlite-wasm-vfs 0.2. Only its sahpool VFS is registered.
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 sqlite-wasm-vfs = "0.2"

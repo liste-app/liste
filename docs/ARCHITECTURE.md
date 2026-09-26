@@ -29,9 +29,11 @@ Liste is **open source from the first commit** (AGPL-3.0) and **self-hostable**.
 | iOS | Swift + SwiftUI (UIKit where needed) | UniFFI (Swift) | App Store |
 | macOS | Swift + SwiftUI (AppKit where needed) | UniFFI (Swift) | **Direct download (primary; notarized, Sparkle updates, not sandboxed)** + App Store (secondary; App Group container) |
 | Android | Kotlin + Jetpack Compose | UniFFI (Kotlin) | Google Play |
-| Windows | C# + WinUI 3 | uniffi-bindgen-cs (NordSecurity) | **MSIX via App Installer from downloads.liste.app (primary; built-in auto-update)** + Microsoft Store (secondary, same MSIX) |
+| Windows | C# + WinUI 3 | uniffi-bindgen-cs (NordSecurity) | **MSIX via App Installer from downloads.<project-domain> (primary; built-in auto-update)** + Microsoft Store (secondary, same MSIX) |
 | Linux | Rust + GTK4 + libadwaita | Direct (same language, no FFI) | Flatpak on Flathub (primary), AppImage |
 | Web | SvelteKit | Rust core compiled to WASM, in a Web Worker | PWA, installable |
+
+The project domain is not chosen yet; `<project-domain>` is a placeholder for it throughout this document.
 
 iOS and macOS share one Xcode project with shared Swift code and platform-specific views where they matter.
 
@@ -260,7 +262,7 @@ E2EE is the one property that cannot be retrofitted, so it ships in v1. The serv
 ### Clients: SQLite
 - SQLite on every client, accessed only through the Rust core, so every client shares one schema, one set of queries, and one set of migrations.
 - **Native platforms:** `rusqlite`. WAL mode. On desktop, only the host process opens the file (Section 3).
-- **Web (settled):** SQLite is **compiled into the Rust WASM module** using the `sqlite-wasm-rs` crate, which integrates with `rusqlite`. Use its **OPFS "sahpool" VFS** (requires a dedicated worker, which is where the core already runs) with the **IndexedDB VFS as fallback** for browsers without OPFS. This keeps one core binary everywhere with FTS5 and migrations in one place. The alternative (letting the official SQLite WASM build own storage on the JS side) is rejected because it splits the core.
+- **Web (settled):** SQLite is **compiled into the Rust WASM module** using the `sqlite-wasm-rs` crate, which integrates with `rusqlite`. Use its **OPFS "sahpool" VFS only**, in the dedicated worker where the core already runs. Browsers without OPFS are unsupported for persistence and get a clear "unsupported browser" message. Do not reintroduce an IndexedDB VFS: its asynchronous persistence does not meet SQLite's durability requirements. This keeps one core binary everywhere with FTS5 and migrations in one place. The alternative (letting the official SQLite WASM build own storage on the JS side) is rejected because it splits the core.
 - **Search:** SQLite **FTS5** for instant local search. No separate search engine.
 - **Two kinds of tables:** the encrypted-at-rest op log (mirrors what the server has) and plaintext materialized tables for querying. The local database relies on OS-level disk encryption plus keystore-protected keys. **No SQLite page-level encryption** (settled): the materialized tables must be queryable and FTS-indexed in plaintext anyway, page-level encryption adds a second key to manage in every client, and the platform keystore plus full-disk encryption is the same model the major password managers rely on for their local caches.
 
@@ -503,14 +505,14 @@ Liste's code is open source under the **AGPL-3.0**. Anyone can read it, build it
 2. Sign in with Apple and Google.
 3. Native-app passkeys (Section 8; a self-hoster's domain cannot vouch for Liste's app identifiers).
 4. The push relay's server side (self-hosters use it; they do not run it).
-5. Future third-party inbound channels that require Liste's domains (e.g. an `@liste.app` email-to-task address). A self-hoster can point their own inbound domain at their instance.
+5. Future third-party inbound channels that require Liste's domains (e.g. an `@<project-domain>` email-to-task address). A self-hoster can point their own inbound domain at their instance.
 
 Anything not on this list must work self-hosted. Adding to this list is a Section 18 change and needs a written reason.
 
 ### Revenue
 - **Liste Cloud Pro subscription** (primary): **$48/year** (shown as $4/month) or **$6 month-to-month**, 14-day trial, regional pricing via the Stripe and store price tiers.
 - **Cloud free tier:** the full app on every platform, sync across devices, E2EE, local CLI, local MCP server, one personal space, up to 5 lists/projects, unlimited tasks. Generous enough that most individuals never need Pro, which is deliberate: those users are the funnel, the reviews, and the contributors.
-- **Cloud Pro:** unlimited lists, attachments/file storage, shared spaces and collaboration (when shipped), calendar integrations, unlimited saved filters, `@liste.app` inbound channels (when shipped), priority support.
+- **Cloud Pro:** unlimited lists, attachments/file storage, shared spaces and collaboration (when shipped), calendar integrations, unlimited saved filters, `@<project-domain>` inbound channels (when shipped), priority support.
 - **GitHub Sponsors / Open Collective** for people who self-host and want to fund the project anyway. Linked from the README and the self-host docs, never nagged in the product.
 - **Later, if demand appears:** paid self-hosting support or managed instances for teams. Not v1.
 - **Billing plumbing:** Stripe on web; App Store and Google Play in-app purchase where store rules require it. Direct-download desktop builds use the web checkout. Entitlement is stored on the account (`accounts.plan`) so it applies on every platform regardless of where it was purchased.
@@ -541,7 +543,7 @@ This section covers **Liste Cloud**, the maintainers' hosted service. Self-hosti
 - **Caching:** the WASM core, the worker bundle, and all JS/CSS get content-hashed filenames with `Cache-Control: public, max-age=31536000, immutable`. `index.html` and the service worker are `no-cache`, so a deploy is atomic and instant for returning users.
 - **WASM delivery:** serve `.wasm` as `application/wasm` so browsers stream-compile it. Precompress with Brotli. The core loads in parallel with the shell (Section 4 budget).
 - **No cross-origin isolation required.** The OPFS sahpool VFS does not use SharedArrayBuffer, so no COOP/COEP headers. Do not add them; they break third-party embeds and fonts for no gain.
-- Domains: `liste.app` (marketing + app), `api.liste.app` (sync), `downloads.liste.app` (R2).
+- Domains: `<project-domain>` (marketing + app), `api.<project-domain>` (sync), `downloads.<project-domain>` (R2).
 
 ### Sync server: Cloudflare Containers, unchanged Axum
 - The Axum server from Section 12 runs **as-is** in a Cloudflare Container (Docker image built in CI; multi-stage build, distroless or scratch base, statically linked). No Cloudflare-specific code inside the server: if Liste ever leaves Cloudflare, the same image runs anywhere.
@@ -558,7 +560,7 @@ This section covers **Liste Cloud**, the maintainers' hosted service. Self-hosti
 - Backups: PlanetScale automated backups plus a nightly logical dump to a private R2 bucket in a different account/region. Restore is rehearsed quarterly against staging. Data on the server is ciphertext, so a backup leak is not a content leak, but it is still treated as sensitive metadata.
 
 ### Downloads and updates: R2
-- All desktop artifacts live in an R2 bucket served at `downloads.liste.app` behind Cloudflare's CDN: macOS DMGs and the Sparkle appcast, Windows MSIX bundles and the `.appinstaller` manifest, Linux AppImages. R2 has no egress fees, which matters at update-volume scale.
+- All desktop artifacts live in an R2 bucket served at `downloads.<project-domain>` behind Cloudflare's CDN: macOS DMGs and the Sparkle appcast, Windows MSIX bundles and the `.appinstaller` manifest, Linux AppImages. R2 has no egress fees, which matters at update-volume scale.
 - Stable "latest" URLs (`/mac/latest.dmg`, `/win/Liste.appinstaller`, `/linux/latest.AppImage`) are served by a tiny Worker that redirects to the current versioned object, so links on the site never rot.
 - Every artifact is versioned, immutable, and never overwritten. Roll back by pointing "latest" at the previous version.
 
@@ -571,7 +573,7 @@ This section covers **Liste Cloud**, the maintainers' hosted service. Self-hosti
 
 ### Observability
 - **Clients:** Sentry SDKs in every native app and the web app, with crash reports scrubbed of task content (never send titles, notes, tags, or op payloads in breadcrumbs).
-- **Server:** structured JSON logs from Axum, shipped via Cloudflare Logpush; Workers Analytics for the edge layer; one external uptime check on `api.liste.app/health`.
+- **Server:** structured JSON logs from Axum, shipped via Cloudflare Logpush; Workers Analytics for the edge layer; one external uptime check on `api.<project-domain>/health`.
 - **Metrics that matter:** sync ingest latency p50/p99, op-log growth per space, snapshot age, container cold-start rate, WebSocket connection count, failed push deliveries.
 
 ### CI/CD: GitHub Actions
