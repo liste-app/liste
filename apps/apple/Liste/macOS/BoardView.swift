@@ -3,7 +3,8 @@
 // count, then pages of cards fetched as they scroll into view. Dropping a
 // card on a column, or moving it with Option-arrows, changes that one
 // field through the core. Column order and collapsed state are
-// per-grouping preferences.
+// per-grouping preferences. A column is just its heading and its cards;
+// only the cards have a surface.
 
 import ListeCore
 import ListeKit
@@ -211,9 +212,8 @@ struct BoardView: View {
                 }
             }
         }
-        .padding(Tokens.Space.sm)
         .frame(width: isCollapsed ? 180 : 260, alignment: .top)
-        .background(Tokens.Colors.backgroundSecondary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+        .contentShape(Rectangle())
         .dropDestination(for: String.self) { ids, _ in
             for id in ids {
                 if let task = session.find(id) {
@@ -231,7 +231,7 @@ struct BoardView: View {
             card(task).draggable(task.id)
         } else {
             RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                .fill(Tokens.Colors.backgroundTertiary)
+                .fill(Tokens.Colors.backgroundSecondary)
                 .frame(height: Tokens.Size.row)
                 .onAppear { column.ensure(index, from: session) }
         }
@@ -259,7 +259,7 @@ struct BoardView: View {
         }
         .padding(Tokens.Space.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Tokens.Colors.background, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .background(Tokens.Colors.backgroundSecondary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
         .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.md).stroke(selected ? Tokens.Colors.accent : Tokens.Colors.separator, lineWidth: selected ? 2 : 1))
         .contentShape(Rectangle())
         .onTapGesture { ui.selectedTaskId = task.id }
