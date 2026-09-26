@@ -15,6 +15,7 @@
 //! and `seq` is the server's per-space sequence once assigned.
 
 mod apply;
+mod capture;
 pub mod fixture;
 mod query;
 pub mod schema;
@@ -30,6 +31,7 @@ use crate::model::EntityType;
 use crate::op::{DecodeError, Mutation, Op, SCHEMA_VERSION};
 use crate::undo::{Inverse, UndoStack};
 
+pub use capture::{Captured, Completed};
 pub use query::{SpaceState, TaskFilter};
 pub use snapshot::Snapshot;
 
@@ -55,6 +57,8 @@ pub enum StoreError {
     },
     #[error("locked: keys have not been unlocked on this device")]
     Locked,
+    #[error("no task {0}")]
+    NoSuchTask(Id),
 }
 
 /// Result alias for store operations.
