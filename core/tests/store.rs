@@ -424,6 +424,17 @@ fn manual_order_is_an_outline_and_windows_count_the_whole_listing() {
         .collect();
     assert_eq!(titles, vec![("t0", 0), ("t3", 1), ("t2", 2), ("t1", 0)]);
     assert_eq!(store.count(space, &filter).unwrap(), 4);
+    let has: Vec<bool> = rows.iter().map(|r| r.has_subtasks).collect();
+    assert_eq!(has, vec![true, true, false, false]);
+    // Collapsing t3 hides its subtree from the rows and the count.
+    let collapsed = TaskFilter {
+        collapsed: vec![ids[3]],
+        ..Default::default()
+    };
+    let rows = store.task_rows(space, &collapsed).unwrap();
+    let titles: Vec<&str> = rows.iter().map(|r| r.task.title.as_str()).collect();
+    assert_eq!(titles, vec!["t0", "t3", "t1"]);
+    assert_eq!(store.count(space, &collapsed).unwrap(), 3);
     // A window in the middle: the count is unchanged and the first row's
     // depth is kept from the stored outline.
     let window = store

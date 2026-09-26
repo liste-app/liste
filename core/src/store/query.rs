@@ -40,6 +40,8 @@ pub struct TaskFilter {
     /// Only completed tasks.
     pub completed_only: bool,
     pub include_deleted: bool,
+    /// Tasks whose subtrees the listing hides (collapsed in a view).
+    pub collapsed: Vec<Id>,
     pub order: TaskOrder,
     /// Rows to skip, for a window into a long list.
     pub offset: usize,
@@ -55,6 +57,8 @@ pub struct TaskFilter {
 pub struct TaskRow {
     pub task: Task,
     pub depth: u32,
+    /// Whether any live task has this one as its parent.
+    pub has_subtasks: bool,
 }
 
 /// An op as the log holds it.
@@ -292,9 +296,28 @@ pub(super) fn task(conn: &Connection, id: Id) -> Result<Option<Task>> {
 }
 
 /// The `WHERE` predicate (over `tasks`) and its positional arguments.
-fn where_clause(space_id: Id, filter: &TaskFilter) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+fn where_clause(
+    conn: &Connection,
+    space_id: Id,
+    filter: &TaskFilter,
+) -> Result<(String, Vec<Box<dyn rusqlite::ToSql>>)> {
     let mut where_sql = String::from("tasks.space_id = ?1");
     let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(space_id)];
+    // A collapsed subtree is one range of the outline: every key from the
+    // parent's key plus `/` up to the parent's key plus `0`.
+    for parent in &filter.collapsed {
+        let key: Option<String> = conn
+            .prepare_cached("SELECT sort_key FROM tasks WHERE id = ?1 AND space_id = ?2")?
+            .query_row(params![parent, space_id], |r| r.get(0))
+            .optional()?;
+        if let Some(key) = key {
+            args.push(Box::new(key));
+            where_sql.push_str(&format!(
+                " AND NOT (tasks.sort_key >= ?{n} || '/' AND tasks.sort_key < ?{n} || '0')",
+                n = args.len()
+            ));
+        }
+    }
     match filter.list {
         Some(None) => where_sql.push_str(" AND tasks.list_id IS NULL"),
         Some(Some(list)) => {
@@ -339,7 +362,7 @@ fn where_clause(space_id: Id, filter: &TaskFilter) -> (String, Vec<Box<dyn rusql
     if !filter.include_deleted {
         where_sql.push_str(" AND tasks.deleted_at IS NULL");
     }
-    (where_sql, args)
+    Ok((where_sql, args))
 }
 
 /// Status names in use on open tasks: `open` first, then the rest by name.
@@ -361,7 +384,7 @@ pub(super) fn statuses(conn: &Connection, space_id: Id) -> Result<Vec<String>> {
 
 /// How many tasks match, ignoring `offset` and `limit`.
 pub(super) fn count(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Result<usize> {
-    let (where_sql, args) = where_clause(space_id, filter);
+    let (where_sql, args) = where_clause(conn, space_id, filter)?;
     let sql = format!("SELECT count(*) FROM tasks WHERE {where_sql}");
     let mut stmt = conn.prepare_cached(&sql)?;
     let n: i64 = stmt.query_row(rusqlite::params_from_iter(args.iter()), |r| r.get(0))?;
@@ -382,7 +405,7 @@ pub(super) fn task_rows(
     space_id: Id,
     filter: &TaskFilter,
 ) -> Result<Vec<TaskRow>> {
-    let (where_sql, args) = where_clause(space_id, filter);
+    let (where_sql, args) = where_clause(conn, space_id, filter)?;
     let order = match filter.order {
         TaskOrder::Manual => "sort_key, id",
         // A due range excludes undated tasks, so the order is the index's.
@@ -390,8 +413,11 @@ pub(super) fn task_rows(
         TaskOrder::DueThenManual => "due_at IS NULL, due_at, sort_key, id",
         TaskOrder::CompletedDesc => "completed_at DESC, id",
     };
-    let mut sql =
-        format!("SELECT {TASK_COLUMNS}, sort_key FROM tasks WHERE {where_sql} ORDER BY {order}");
+    let mut sql = format!(
+        "SELECT {TASK_COLUMNS}, sort_key,
+            EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = tasks.id AND c.deleted_at IS NULL)
+         FROM tasks WHERE {where_sql} ORDER BY {order}"
+    );
     if filter.limit > 0 || filter.offset > 0 {
         let limit = if filter.limit > 0 {
             filter.limit as i64
@@ -401,14 +427,18 @@ pub(super) fn task_rows(
         sql.push_str(&format!(" LIMIT {limit} OFFSET {}", filter.offset));
     }
     let mut stmt = conn.prepare_cached(&sql)?;
-    let mut rows: Vec<(Task, String)> = stmt
+    let mut rows: Vec<(Task, String, bool)> = stmt
         .query_map(rusqlite::params_from_iter(args.iter()), |r| {
-            Ok((task_from_row(r)?, r.get::<_, String>(17)?))
+            Ok((
+                task_from_row(r)?,
+                r.get::<_, String>(17)?,
+                r.get::<_, i64>(18)? != 0,
+            ))
         })?
         .collect::<rusqlite::Result<_>>()?;
     let windowed = filter.limit > 0 || filter.offset > 0;
     {
-        let mut tasks: Vec<&mut Task> = rows.iter_mut().map(|(t, _)| t).collect();
+        let mut tasks: Vec<&mut Task> = rows.iter_mut().map(|(t, _, _)| t).collect();
         if windowed && tasks.len() < 1_000 {
             fill_tags_each(conn, &mut tasks)?;
         } else {
@@ -423,7 +453,11 @@ pub(super) fn task_rows(
     Ok(rows
         .into_iter()
         .zip(depths)
-        .map(|((task, _), depth)| TaskRow { task, depth })
+        .map(|((task, _, has_subtasks), depth)| TaskRow {
+            task,
+            depth,
+            has_subtasks,
+        })
         .collect())
 }
 
@@ -432,9 +466,9 @@ pub(super) fn task_rows(
 /// exactly the rows above it whose path is a prefix of its own; a parent
 /// that is not in the listing (completed, filtered out) closes the gap.
 /// Ancestors of the first row may sit above the window and count as shown.
-fn visible_depths(rows: &[(Task, String)]) -> Vec<u32> {
+fn visible_depths(rows: &[(Task, String, bool)]) -> Vec<u32> {
     let mut stack: Vec<String> = Vec::new();
-    if let Some((_, first)) = rows.first() {
+    if let Some((_, first, _)) = rows.first() {
         let mut prefix = String::new();
         for part in first.split('/') {
             if !prefix.is_empty() {
@@ -445,7 +479,7 @@ fn visible_depths(rows: &[(Task, String)]) -> Vec<u32> {
         }
     }
     let mut out = Vec::with_capacity(rows.len());
-    for (_, key) in rows {
+    for (_, key, _) in rows {
         while let Some(top) = stack.last() {
             if key.len() > top.len() && key.starts_with(top) && key.as_bytes()[top.len()] == b'/' {
                 break;

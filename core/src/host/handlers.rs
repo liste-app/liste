@@ -92,13 +92,14 @@ fn task_view(store: &Store, task: &Task, tz: &TimeZone) -> Result<TaskView, Stor
 }
 
 fn task_view_with(names: &Names, task: &Task, tz: &TimeZone) -> Result<TaskView, StoreError> {
-    task_view_at(names, task, 0, tz)
+    task_view_at(names, task, 0, false, tz)
 }
 
 fn task_view_at(
     names: &Names,
     task: &Task,
     depth: u32,
+    has_subtasks: bool,
     tz: &TimeZone,
 ) -> Result<TaskView, StoreError> {
     let list = task.list_id.and_then(|l| {
@@ -126,6 +127,7 @@ fn task_view_at(
         completed_at: task.completed_at,
         parent_id: task.parent_id.map(uuid),
         depth,
+        has_subtasks,
         tags,
         recurrence: task.recurrence.clone(),
         created_at: task.created_at,
@@ -150,7 +152,7 @@ fn row_views(store: &Store, rows: &[TaskRow], tz: &TimeZone) -> Result<Vec<TaskV
     };
     let names = Names::load(store, first.task.space_id)?;
     rows.iter()
-        .map(|r| task_view_at(&names, &r.task, r.depth, tz))
+        .map(|r| task_view_at(&names, &r.task, r.depth, r.has_subtasks, tz))
         .collect()
 }
 
@@ -1160,6 +1162,7 @@ fn query_filter(inner: &Inner, store: &Store, q: &TaskQuery) -> Result<TaskFilte
         include_completed: q.include_completed,
         completed_only: q.completed_only,
         include_deleted: false,
+        collapsed: q.collapsed.iter().copied().map(id).collect(),
         order,
         offset: q.offset,
         limit: q.limit.min(100_000),

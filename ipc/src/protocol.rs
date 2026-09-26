@@ -214,6 +214,10 @@ pub struct TaskQuery {
     pub include_completed: bool,
     #[serde(default)]
     pub completed_only: bool,
+    /// Tasks whose subtasks the view has collapsed; their subtrees are
+    /// left out of the rows and the count.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collapsed: Vec<Uuid>,
     /// `manual` (default), `due`, or `completed`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<String>,
@@ -388,6 +392,9 @@ pub struct TaskView {
     /// listing; zero outside manual order.
     #[serde(default)]
     pub depth: u32,
+    /// Whether any live task has this one as its parent.
+    #[serde(default)]
+    pub has_subtasks: bool,
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recurrence: Option<String>,

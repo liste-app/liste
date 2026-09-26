@@ -80,6 +80,8 @@ mod native {
         pub parent_id: Option<String>,
         /// Indentation under the rows above it in the same listing.
         pub depth: u32,
+        /// Whether any live task has this one as its parent.
+        pub has_subtasks: bool,
         pub tags: Vec<String>,
         pub recurrence: Option<String>,
         pub created_at: i64,
@@ -103,6 +105,7 @@ mod native {
                 completed_at: t.completed_at,
                 parent_id: t.parent_id.map(|p| p.to_string()),
                 depth: t.depth,
+                has_subtasks: t.has_subtasks,
                 tags: t.tags,
                 recurrence: t.recurrence,
                 created_at: t.created_at,
@@ -239,6 +242,9 @@ mod native {
         pub include_completed: bool,
         #[uniffi(default = false)]
         pub completed_only: bool,
+        /// Tasks whose subtasks the view has collapsed.
+        #[uniffi(default = [])]
+        pub collapsed: Vec<String>,
         #[uniffi(default = None)]
         pub order: Option<String>,
         #[uniffi(default = 0)]
@@ -264,6 +270,11 @@ mod native {
                 has_reminder: self.has_reminder,
                 include_completed: self.include_completed,
                 completed_only: self.completed_only,
+                collapsed: self
+                    .collapsed
+                    .iter()
+                    .map(|c| uuid(c))
+                    .collect::<Result<Vec<_>, _>>()?,
                 order: self.order,
                 offset: self.offset as usize,
                 limit: self.limit as usize,
