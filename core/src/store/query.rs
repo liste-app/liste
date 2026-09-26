@@ -442,10 +442,11 @@ pub(super) fn task_rows(
             ))
         })?
         .collect::<rusqlite::Result<_>>()?;
-    let windowed = filter.limit > 0 || filter.offset > 0;
     {
+        // A few rows take one indexed tag lookup each; only a large
+        // result is worth one join over every tag row the filter reaches.
         let mut tasks: Vec<&mut Task> = rows.iter_mut().map(|(t, _, _)| t).collect();
-        if windowed && tasks.len() < 1_000 {
+        if tasks.len() < 1_000 {
             fill_tags_each(conn, &mut tasks)?;
         } else {
             fill_tags_where(conn, &mut tasks, &where_sql, &args)?;
