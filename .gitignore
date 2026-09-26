@@ -1,1 +1,87 @@
 CLAUDE.local.md
+
+# Rust
+/target/
+**/target/
+*.rs.bk
+*.pdb
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+.svelte-kit/
+apps/web/build/
+apps/web/dist/
+.wrangler/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+
+# Generated bindings (produced at build time, never committed)
+/bindings/generated/
+
+# Xcode / Apple
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.xcarchive
+.build/
+Pods/
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Android / Gradle
+.gradle/
+apps/android/**/build/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+captures/
+.externalNativeBuild/
+.cxx/
+*.jks
+*.keystore
+
+# .NET / Visual Studio
+apps/windows/**/bin/
+apps/windows/**/obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+*.pfx
+AppPackages/
+BundleArtifacts/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.p12
+*.mobileprovision
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
