@@ -4,15 +4,26 @@
 //! X25519 key and sends an [`ApprovalRequest`] through the server. Both
 //! devices derive the same eight-digit [`ShortCode`] from that request and
 //! show it; the person confirms the codes match on the existing device,
-//! which proves to it that the request came from the device in their hand
-//! and not from an attacker who reached the same account. The existing
-//! device then seals the root key for the ephemeral key, signs the grant
-//! with the user's signing key, and sends the [`ApprovalGrant`] back. The
-//! new device checks the signature against the signer it expects (the
-//! account's published signing key), unseals the root key, and adopts it.
-//! A server that forges a grant cannot sign it, and a server that swaps
-//! the published signing key still cannot produce a root key that unwraps
-//! the existing user keys.
+//! then the existing device seals the root key for the ephemeral key,
+//! signs the grant with the user's signing key, and sends the
+//! [`ApprovalGrant`] back. The new device checks the signature against the
+//! signer it expects (the account's published signing key), unseals the
+//! root key, and adopts it.
+//!
+//! **What the short code proves, and to whom.** The code is not a secret
+//! and is not random: it is a truncated SHA-256 of the account id, the new
+//! device id, and the new device's ephemeral public key. It therefore
+//! proves one thing, to the existing device: that the request it is
+//! looking at carries the same ephemeral key as the device in the person's
+//! hand. A server (or anyone between the two devices) that substitutes its
+//! own ephemeral key to intercept the root key changes the code on the
+//! existing device's screen, the person sees a mismatch, and declines.
+//! Binding the account id means a request relayed into another account
+//! shows a different code there too. The code proves nothing to the new
+//! device; that direction rests on the signed grant, and on the fact that
+//! a root key not belonging to the account cannot unwrap the account's
+//! published user keys. A forged grant cannot be signed, and a swapped
+//! signing key still cannot produce a root key that unwraps those keys.
 //!
 //! **Recovery key.** The person types the recovery key; the root key is
 //! unwrapped from the account material. See [`Keyring::unlock_with_recovery`].
@@ -21,7 +32,7 @@
 //! sync client to carry; none of it is secret on the wire.
 
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use super::CryptoError;
 use super::keyring::{AccountMaterial, Keyring};
@@ -37,6 +48,8 @@ const GRANT_LABEL: &[u8] = b"liste/approval/grant/v1";
 /// Sent by the device asking to be approved.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct ApprovalRequest {
+    /// The account the new device is joining.
+    pub account_id: Id,
     pub device_id: Id,
     /// The new device's ephemeral X25519 public key.
     pub ephemeral: [u8; 32],
@@ -48,8 +61,9 @@ pub struct ShortCode(String);
 
 impl ShortCode {
     fn derive(request: &ApprovalRequest) -> ShortCode {
-        let mut input = Vec::with_capacity(CODE_LABEL.len() + 16 + 32);
+        let mut input = Vec::with_capacity(CODE_LABEL.len() + 32 + 32);
         input.extend_from_slice(CODE_LABEL);
+        input.extend_from_slice(request.account_id.as_bytes());
         input.extend_from_slice(request.device_id.as_bytes());
         input.extend_from_slice(&request.ephemeral);
         let h = sha256(&input);
@@ -88,8 +102,9 @@ fn grant_key(
     request: &ApprovalRequest,
     approver_ephemeral: &[u8; 32],
 ) -> Zeroizing<[u8; 32]> {
-    let mut info = Vec::with_capacity(GRANT_LABEL.len() + 16 + 64);
+    let mut info = Vec::with_capacity(GRANT_LABEL.len() + 32 + 64);
     info.extend_from_slice(GRANT_LABEL);
+    info.extend_from_slice(request.account_id.as_bytes());
     info.extend_from_slice(request.device_id.as_bytes());
     info.extend_from_slice(&request.ephemeral);
     info.extend_from_slice(approver_ephemeral);
@@ -97,8 +112,9 @@ fn grant_key(
 }
 
 fn grant_aad(request: &ApprovalRequest, approver_ephemeral: &[u8; 32]) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(GRANT_LABEL.len() + 16 + 64);
+    let mut aad = Vec::with_capacity(GRANT_LABEL.len() + 32 + 64);
     aad.extend_from_slice(GRANT_LABEL);
+    aad.extend_from_slice(request.account_id.as_bytes());
     aad.extend_from_slice(request.device_id.as_bytes());
     aad.extend_from_slice(&request.ephemeral);
     aad.extend_from_slice(approver_ephemeral);
@@ -134,11 +150,12 @@ impl std::fmt::Debug for NewDeviceApproval {
 }
 
 impl NewDeviceApproval {
-    /// Start an approval attempt for this device.
-    pub fn begin(device_id: Id) -> Result<NewDeviceApproval, CryptoError> {
+    /// Start an approval attempt for this device joining `account_id`.
+    pub fn begin(account_id: Id, device_id: Id) -> Result<NewDeviceApproval, CryptoError> {
         let secret = X25519Secret::generate()?;
         Ok(NewDeviceApproval {
             request: ApprovalRequest {
+                account_id,
                 device_id,
                 ephemeral: secret.public(),
             },
@@ -183,11 +200,13 @@ impl NewDeviceApproval {
         let key = grant_key(&shared, &self.request, &grant.ephemeral);
         let aad = grant_aad(&self.request, &grant.ephemeral);
         let bytes = aead_open(&key, &aad, &grant.sealed_root)?;
-        let arr: [u8; 32] = bytes
+        let mut arr: [u8; 32] = bytes
             .as_slice()
             .try_into()
             .map_err(|_| CryptoError::Decrypt)?;
-        keyring.adopt_root(RootKey::from_bytes(arr), material)
+        let root = RootKey::from_bytes(arr);
+        arr.zeroize();
+        keyring.adopt_root(root, material)
     }
 }
 

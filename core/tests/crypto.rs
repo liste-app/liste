@@ -273,8 +273,9 @@ fn a_new_device_is_approved_by_an_existing_one() {
     let e = existing.encrypt_op(&op).unwrap();
 
     // New device: request and a code on screen.
+    let account = Id::new();
     let new_id = Id::new();
-    let attempt = NewDeviceApproval::begin(new_id).unwrap();
+    let attempt = NewDeviceApproval::begin(account, new_id).unwrap();
     let request = attempt.request().clone();
     let shown = attempt.short_code();
     assert_eq!(shown.as_str().len(), 9);
@@ -298,7 +299,7 @@ fn a_new_device_is_approved_by_an_existing_one() {
 
     // A grant for a different request, a forged signer, or a tampered
     // grant is rejected.
-    let other_attempt = NewDeviceApproval::begin(Id::new()).unwrap();
+    let other_attempt = NewDeviceApproval::begin(account, Id::new()).unwrap();
     let mut other_device = Keyring::new(Box::new(MemoryKeyStore::new()));
     assert_eq!(
         other_attempt
@@ -306,7 +307,7 @@ fn a_new_device_is_approved_by_an_existing_one() {
             .unwrap_err(),
         CryptoError::Signature
     );
-    let replay = NewDeviceApproval::begin(new_id).unwrap();
+    let replay = NewDeviceApproval::begin(account, new_id).unwrap();
     assert_eq!(
         replay
             .complete(&grant, &signer, &mut other_device, &material)
@@ -314,12 +315,12 @@ fn a_new_device_is_approved_by_an_existing_one() {
         CryptoError::Signature,
         "same device id, different ephemeral key: the signature covers the key"
     );
-    let attempt2 = NewDeviceApproval::begin(Id::new()).unwrap();
+    let attempt2 = NewDeviceApproval::begin(account, Id::new()).unwrap();
     let grant2 = existing.grant_approval(attempt2.request()).unwrap();
     let mut forged = grant2.clone();
     forged.sealed_root[5] ^= 1;
     assert_eq!(
-        NewDeviceApproval::begin(Id::new())
+        NewDeviceApproval::begin(account, Id::new())
             .unwrap()
             .complete(&forged, &signer, &mut other_device, &material)
             .unwrap_err(),
@@ -368,6 +369,46 @@ fn keyring_states_and_errors_carry_no_secrets() {
         format!("no key for space {}", encrypted.space_id)
     );
     assert_eq!(CryptoError::Decrypt.to_string(), "decryption failed");
+}
+
+/// The short code is a hash of the account, the device, and the ephemeral
+/// key, so a server that substitutes its own key changes what the
+/// existing device shows.
+#[test]
+fn a_substituted_ephemeral_key_changes_the_short_code() {
+    let (existing, _, _) = keyring();
+    let account = Id::new();
+    let device = Id::new();
+    let attempt = NewDeviceApproval::begin(account, device).unwrap();
+    let genuine = attempt.request().clone();
+    let shown = attempt.short_code();
+    assert_eq!(existing.review_approval(&genuine), shown);
+    assert!(shown.as_str().len() >= 9, "eight digits plus a space");
+
+    // The server swaps in an ephemeral key it controls.
+    let attacker = NewDeviceApproval::begin(account, device).unwrap();
+    let mut substituted = genuine.clone();
+    substituted.ephemeral = attacker.request().ephemeral;
+    let on_existing = existing.review_approval(&substituted);
+    assert_ne!(on_existing, shown);
+    assert!(!on_existing.matches(shown.as_str()));
+
+    // Relaying the request into another account changes it too.
+    let mut other_account = genuine.clone();
+    other_account.account_id = Id::new();
+    assert_ne!(existing.review_approval(&other_account), shown);
+
+    // And even if the person were fooled, a grant for the substituted
+    // request does not open for the genuine device's key.
+    let grant = existing.grant_approval(&substituted).unwrap();
+    let (_, _, material) = keyring();
+    let mut new_device = Keyring::new(Box::new(MemoryKeyStore::new()));
+    assert!(
+        attempt
+            .complete(&grant, &grant.signer, &mut new_device, &material)
+            .is_err()
+    );
+    assert!(!new_device.is_unlocked());
 }
 
 /// Decrypted buffers and the rendered recovery key are zeroized on drop,
