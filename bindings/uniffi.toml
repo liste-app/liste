@@ -5,8 +5,12 @@ module_name = "ListeCore"
 ffi_module_name = "ListeCoreFFI"
 generate_immutable_records = true
 
+# `com.example.liste` is a placeholder. It, and every bundle or application
+# identifier across the apps, must be replaced with the reverse form of the
+# project domain before the first Xcode or Android project is created, and
+# must never change afterwards.
 [bindings.kotlin]
-package_name = "app.liste.core"
+package_name = "com.example.liste"
 cdylib_name = "liste_bindings"
 generate_immutable_records = true
 
