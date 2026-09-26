@@ -66,6 +66,37 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         list_id: Option<Uuid>,
     },
+    /// Any combination of filters (smart lists, tags, saved filters).
+    Query(TaskQuery),
+    /// Move a task in manual order to sit between two neighbours; either
+    /// may be absent for the ends.
+    Reorder {
+        id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<Uuid>,
+    },
+    /// Tombstone a task. Undo restores it.
+    Delete {
+        id: Uuid,
+    },
+    Tags,
+    CreateList {
+        title: String,
+    },
+    UpdateList {
+        id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<Uuid>,
+    },
+    DeleteList {
+        id: Uuid,
+    },
     GetTask {
         id: Uuid,
     },
@@ -83,6 +114,38 @@ pub enum Request {
     Undo,
     Redo,
     Debug(DebugRequest),
+}
+
+/// A filter over tasks. Absent fields do not filter.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TaskQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_id: Option<Uuid>,
+    /// Only tasks with no list.
+    #[serde(default)]
+    pub inbox: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Due in `[due_from, due_to)`, Unix milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_from: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_to: Option<i64>,
+    #[serde(default)]
+    pub has_reminder: bool,
+    #[serde(default)]
+    pub include_completed: bool,
+    #[serde(default)]
+    pub completed_only: bool,
+    /// `manual` (default), `due`, or `completed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<String>,
+    #[serde(default)]
+    pub limit: usize,
 }
 
 /// Fields to change on a task. Absent fields are untouched.
@@ -105,6 +168,15 @@ pub struct TaskPatch {
     pub add_tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remove_tags: Vec<String>,
+    /// A status name, for kanban columns grouped by status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// A parent task id; an empty string makes the task top-level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// Reminder as natural-language date text; an empty string clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reminder: Option<String>,
 }
 
 /// The developer harness (Section 13, `liste debug`).
@@ -142,6 +214,8 @@ pub enum Response {
     },
     Preview(PreviewView),
     Lists(Vec<ListView>),
+    List(ListView),
+    Tags(Vec<TagView>),
     Done {
         changed: bool,
     },
@@ -201,6 +275,12 @@ pub struct ListView {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TagView {
+    pub id: Uuid,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TaskView {
     pub id: Uuid,
     pub title: String,
@@ -213,10 +293,14 @@ pub struct TaskView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due: Option<String>,
     pub due_all_day: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reminder_at: Option<i64>,
     pub priority: String,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<Uuid>,
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recurrence: Option<String>,

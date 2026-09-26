@@ -32,7 +32,7 @@ use crate::op::{DecodeError, Mutation, Op, SCHEMA_VERSION};
 use crate::undo::{Inverse, UndoStack};
 
 pub use capture::{Captured, Completed};
-pub use query::{LoggedOp, SpaceState, TaskFilter};
+pub use query::{LoggedOp, SpaceState, TaskFilter, TaskOrder};
 pub use snapshot::Snapshot;
 
 /// Errors from the store.

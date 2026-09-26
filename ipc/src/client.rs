@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::paths::Endpoint;
 use crate::protocol::{
     Body, DebugRequest, IpcError, ListView, Message, PROTOCOL_VERSION, PreviewView, Request,
-    Response, SpanView, StatusView, TaskPatch, TaskView,
+    Response, SpanView, StatusView, TagView, TaskPatch, TaskQuery, TaskView,
 };
 use crate::transport::{self, Stream};
 
@@ -243,6 +243,43 @@ impl Client {
 
     pub fn list_tasks(&mut self, list_id: Option<Uuid>) -> Result<Vec<TaskView>, ClientError> {
         Client::expect_tasks(self.call(Request::ListTasks { list_id })?)
+    }
+
+    pub fn query(&mut self, query: TaskQuery) -> Result<Vec<TaskView>, ClientError> {
+        Client::expect_tasks(self.call(Request::Query(query))?)
+    }
+
+    pub fn reorder(
+        &mut self,
+        id: Uuid,
+        after: Option<Uuid>,
+        before: Option<Uuid>,
+    ) -> Result<TaskView, ClientError> {
+        Client::expect_task(self.call(Request::Reorder { id, after, before })?)
+    }
+
+    pub fn delete(&mut self, id: Uuid) -> Result<bool, ClientError> {
+        Client::expect_done(self.call(Request::Delete { id })?)
+    }
+
+    pub fn tags(&mut self) -> Result<Vec<TagView>, ClientError> {
+        match self.call(Request::Tags)? {
+            Response::Tags(t) => Ok(t),
+            other => Err(ClientError::Protocol(format!(
+                "expected tags, got {other:?}"
+            ))),
+        }
+    }
+
+    pub fn create_list(&mut self, title: &str) -> Result<ListView, ClientError> {
+        match self.call(Request::CreateList {
+            title: title.to_owned(),
+        })? {
+            Response::List(l) => Ok(l),
+            other => Err(ClientError::Protocol(format!(
+                "expected list, got {other:?}"
+            ))),
+        }
     }
 
     pub fn task(&mut self, id: Uuid) -> Result<TaskView, ClientError> {

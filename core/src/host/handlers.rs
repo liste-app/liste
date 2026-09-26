@@ -4,7 +4,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use liste_ipc::protocol::{
     DebugRequest, IpcError, ListView, OpView, PreviewView, Request, Response, SpanView, StatusView,
-    TaskPatch, TaskView,
+    TagView, TaskPatch, TaskQuery, TaskView,
 };
 use uuid::Uuid;
 
@@ -13,7 +13,7 @@ use crate::ids::Id;
 use crate::model::{EntityType, Field, List, Priority, Task, Value};
 use crate::op::Mutation;
 use crate::parse::{Context, parse};
-use crate::store::{Store, StoreError, TaskFilter, fixture};
+use crate::store::{Store, StoreError, TaskFilter, TaskOrder, fixture};
 
 fn id(u: Uuid) -> Id {
     Id::from_bytes(*u.as_bytes())
@@ -62,20 +62,47 @@ fn render_due(task: &Task, tz: &TimeZone) -> Option<String> {
     })
 }
 
-fn task_view(store: &Store, task: &Task, tz: &TimeZone) -> Result<TaskView, StoreError> {
-    let list = match task.list_id {
-        Some(l) => store.list(l)?.map(|l| ListView {
-            id: uuid(l.id),
-            title: l.title,
-        }),
-        None => None,
-    };
-    let mut tags = Vec::new();
-    for t in &task.tags {
-        if let Some(tag) = store.tag(*t)? {
-            tags.push(tag.name);
-        }
+/// Names looked up once per response, so a 50,000-row list is one query
+/// for lists and one for tags rather than one per row.
+struct Names {
+    lists: std::collections::HashMap<Id, String>,
+    tags: std::collections::HashMap<Id, String>,
+}
+
+impl Names {
+    fn load(store: &Store, space: Id) -> Result<Names, StoreError> {
+        Ok(Names {
+            lists: store
+                .lists(space)?
+                .into_iter()
+                .map(|l| (l.id, l.title))
+                .collect(),
+            tags: store
+                .tags(space)?
+                .into_iter()
+                .map(|t| (t.id, t.name))
+                .collect(),
+        })
     }
+}
+
+fn task_view(store: &Store, task: &Task, tz: &TimeZone) -> Result<TaskView, StoreError> {
+    let names = Names::load(store, task.space_id)?;
+    task_view_with(&names, task, tz)
+}
+
+fn task_view_with(names: &Names, task: &Task, tz: &TimeZone) -> Result<TaskView, StoreError> {
+    let list = task.list_id.and_then(|l| {
+        names.lists.get(&l).map(|title| ListView {
+            id: uuid(l),
+            title: title.clone(),
+        })
+    });
+    let tags: Vec<String> = task
+        .tags
+        .iter()
+        .filter_map(|t| names.tags.get(t).cloned())
+        .collect();
     Ok(TaskView {
         id: uuid(task.id),
         title: task.title.clone(),
@@ -84,9 +111,11 @@ fn task_view(store: &Store, task: &Task, tz: &TimeZone) -> Result<TaskView, Stor
         due_at: task.due_at,
         due: render_due(task, tz),
         due_all_day: task.due_all_day,
+        reminder_at: task.reminder_at,
         priority: priority_name(task.priority).to_owned(),
         status: task.status.clone(),
         completed_at: task.completed_at,
+        parent_id: task.parent_id.map(uuid),
         tags,
         recurrence: task.recurrence.clone(),
         created_at: task.created_at,
@@ -95,7 +124,14 @@ fn task_view(store: &Store, task: &Task, tz: &TimeZone) -> Result<TaskView, Stor
 }
 
 fn task_views(store: &Store, tasks: &[Task], tz: &TimeZone) -> Result<Vec<TaskView>, StoreError> {
-    tasks.iter().map(|t| task_view(store, t, tz)).collect()
+    let Some(first) = tasks.first() else {
+        return Ok(Vec::new());
+    };
+    let names = Names::load(store, first.space_id)?;
+    tasks
+        .iter()
+        .map(|t| task_view_with(&names, t, tz))
+        .collect()
 }
 
 fn now(inner: &Inner) -> jiff::Zoned {
@@ -271,6 +307,196 @@ fn dispatch(inner: &Inner, request: Request) -> Result<Response, IpcError> {
                 .map_err(error)?;
             Response::Tasks(task_views(store, &tasks, tz).map_err(error)?)
         }
+        Request::Query(q) => {
+            let filter = query_filter(&q)?;
+            let tasks = store.tasks(space, &filter).map_err(error)?;
+            Response::Tasks(task_views(store, &tasks, tz).map_err(error)?)
+        }
+        Request::Reorder {
+            id: task_id,
+            after,
+            before,
+        } => {
+            reorder_task(inner, store, id(task_id), after.map(id), before.map(id))?;
+            let task = store
+                .task(id(task_id))
+                .map_err(error)?
+                .ok_or(IpcError::NotFound { id: task_id })?;
+            Response::Task(task_view(store, &task, tz).map_err(error)?)
+        }
+        Request::Delete { id: task_id } => {
+            store
+                .task(id(task_id))
+                .map_err(error)?
+                .ok_or(IpcError::NotFound { id: task_id })?;
+            let op = store.op(space, EntityType::Task, id(task_id), Mutation::Delete);
+            store.commit(std::slice::from_ref(&op)).map_err(error)?;
+            Response::Done { changed: true }
+        }
+        Request::Tags => Response::Tags(
+            store
+                .tags(space)
+                .map_err(error)?
+                .into_iter()
+                .map(|t| TagView {
+                    id: uuid(t.id),
+                    name: t.name,
+                })
+                .collect(),
+        ),
+        Request::CreateList { title } => {
+            let title = title.trim().to_owned();
+            if title.is_empty() {
+                return Err(IpcError::Invalid {
+                    message: "a list needs a title".into(),
+                });
+            }
+            let lists = store.lists(space).map_err(error)?;
+            let last = lists.last().map(|l| l.position.clone());
+            let position = crate::fractional::between(last.as_deref(), None)
+                .unwrap_or_else(|| crate::fractional::FIRST.to_owned());
+            let list_id = Id::new();
+            let now_ms = Timestamp::now().as_millisecond();
+            let ops = vec![
+                store.op(
+                    space,
+                    EntityType::List,
+                    list_id,
+                    Mutation::Set {
+                        field: Field::Title,
+                        value: Value::from(title.as_str()),
+                    },
+                ),
+                store.op(
+                    space,
+                    EntityType::List,
+                    list_id,
+                    Mutation::Set {
+                        field: Field::Position,
+                        value: Value::from(position),
+                    },
+                ),
+                store.op(
+                    space,
+                    EntityType::List,
+                    list_id,
+                    Mutation::Set {
+                        field: Field::CreatedAt,
+                        value: Value::Int(now_ms),
+                    },
+                ),
+            ];
+            store.commit(&ops).map_err(error)?;
+            Response::List(ListView {
+                id: uuid(list_id),
+                title,
+            })
+        }
+        Request::UpdateList {
+            id: list_id,
+            title,
+            after,
+            before,
+        } => {
+            let list = store
+                .list(id(list_id))
+                .map_err(error)?
+                .ok_or(IpcError::NotFound { id: list_id })?;
+            let mut ops = Vec::new();
+            if let Some(title) = title {
+                let title = title.trim();
+                if title.is_empty() {
+                    return Err(IpcError::Invalid {
+                        message: "a list needs a title".into(),
+                    });
+                }
+                ops.push(store.op(
+                    space,
+                    EntityType::List,
+                    list.id,
+                    Mutation::Set {
+                        field: Field::Title,
+                        value: Value::from(title),
+                    },
+                ));
+            }
+            if after.is_some() || before.is_some() {
+                let lists = store.lists(space).map_err(error)?;
+                let pos = |target: Option<Uuid>| -> Result<Option<String>, IpcError> {
+                    match target {
+                        None => Ok(None),
+                        Some(t) => lists
+                            .iter()
+                            .find(|l| l.id == id(t))
+                            .map(|l| Some(l.position.clone()))
+                            .ok_or(IpcError::NotFound { id: t }),
+                    }
+                };
+                let lo = pos(after)?;
+                let hi = pos(before)?;
+                let key =
+                    crate::fractional::between(lo.as_deref(), hi.as_deref()).ok_or_else(|| {
+                        IpcError::Invalid {
+                            message: "no position between those lists".into(),
+                        }
+                    })?;
+                ops.push(store.op(
+                    space,
+                    EntityType::List,
+                    list.id,
+                    Mutation::Set {
+                        field: Field::Position,
+                        value: Value::from(key),
+                    },
+                ));
+            }
+            if !ops.is_empty() {
+                store.commit(&ops).map_err(error)?;
+            }
+            let list = store
+                .list(id(list_id))
+                .map_err(error)?
+                .ok_or(IpcError::NotFound { id: list_id })?;
+            Response::List(ListView {
+                id: uuid(list.id),
+                title: list.title,
+            })
+        }
+        Request::DeleteList { id: list_id } => {
+            store
+                .list(id(list_id))
+                .map_err(error)?
+                .ok_or(IpcError::NotFound { id: list_id })?;
+            // Tasks in the list move to the inbox in the same step, so the
+            // list's disappearance never hides them.
+            let tasks = store
+                .tasks(
+                    space,
+                    &TaskFilter {
+                        list: Some(Some(id(list_id))),
+                        include_completed: true,
+                        ..Default::default()
+                    },
+                )
+                .map_err(error)?;
+            let mut ops: Vec<crate::op::Op> = tasks
+                .iter()
+                .map(|t| {
+                    store.op(
+                        space,
+                        EntityType::Task,
+                        t.id,
+                        Mutation::Set {
+                            field: Field::ListId,
+                            value: Value::Null,
+                        },
+                    )
+                })
+                .collect();
+            ops.push(store.op(space, EntityType::List, id(list_id), Mutation::Delete));
+            store.commit(&ops).map_err(error)?;
+            Response::Done { changed: true }
+        }
         Request::GetTask { id: task_id } => {
             let task = store
                 .task(id(task_id))
@@ -428,6 +654,51 @@ fn update_task(
             ops.push(set(store, Field::ListId, Value::Id(list_id)));
         }
     }
+    if let Some(status) = &patch.status {
+        let status = status.trim();
+        ops.push(set(
+            store,
+            Field::Status,
+            Value::from(if status.is_empty() { "open" } else { status }),
+        ));
+    }
+    if let Some(parent) = &patch.parent {
+        if parent.trim().is_empty() {
+            ops.push(set(store, Field::ParentId, Value::Null));
+        } else {
+            let parent_id: Uuid = parent.trim().parse().map_err(|_| IpcError::Invalid {
+                message: format!("{parent:?} is not a task id"),
+            })?;
+            if id(parent_id) == task_id {
+                return Err(IpcError::Invalid {
+                    message: "a task cannot be its own parent".into(),
+                });
+            }
+            store
+                .task(id(parent_id))
+                .map_err(error)?
+                .ok_or(IpcError::NotFound { id: parent_id })?;
+            ops.push(set(store, Field::ParentId, Value::Id(id(parent_id))));
+        }
+    }
+    if let Some(reminder) = &patch.reminder {
+        if reminder.trim().is_empty() {
+            ops.push(set(store, Field::ReminderAt, Value::Null));
+        } else {
+            let now = now(inner);
+            let cap = parse(reminder, &Context::new(now.clone(), inner.locale, &[]));
+            let Some(occ) = cap.due else {
+                return Err(IpcError::Invalid {
+                    message: format!("could not read a time from {reminder:?}"),
+                });
+            };
+            ops.push(set(
+                store,
+                Field::ReminderAt,
+                Value::Int(crate::recurrence::to_millis(&occ, now.time_zone())),
+            ));
+        }
+    }
     if let Some(notes) = &patch.notes {
         ops.push(store.op(
             space,
@@ -548,4 +819,131 @@ fn debug(inner: &Inner, store: &mut Store, request: DebugRequest) -> Result<Resp
             });
         }
     })
+}
+
+fn query_filter(q: &TaskQuery) -> Result<TaskFilter, IpcError> {
+    let priority = match &q.priority {
+        Some(p) => Some(parse_priority(p).ok_or_else(|| IpcError::Invalid {
+            message: format!("unknown priority {p:?}"),
+        })?),
+        None => None,
+    };
+    let order = match q.order.as_deref() {
+        None | Some("manual") => TaskOrder::Manual,
+        Some("due") => TaskOrder::DueThenManual,
+        Some("completed") => TaskOrder::CompletedDesc,
+        Some(other) => {
+            return Err(IpcError::Invalid {
+                message: format!("unknown order {other:?}"),
+            });
+        }
+    };
+    Ok(TaskFilter {
+        list: if q.inbox {
+            Some(None)
+        } else {
+            q.list_id.map(|l| Some(id(l)))
+        },
+        parent: None,
+        tag: q.tag_id.map(id),
+        priority,
+        status: q.status.clone(),
+        due_between: match (q.due_from, q.due_to) {
+            (None, None) => None,
+            (from, to) => Some((from.unwrap_or(i64::MIN), to.unwrap_or(i64::MAX))),
+        },
+        has_reminder: q.has_reminder,
+        include_completed: q.include_completed,
+        completed_only: q.completed_only,
+        include_deleted: false,
+        order,
+        limit: q.limit.min(100_000),
+    })
+}
+
+/// Give `task_id` a position key between its two new neighbours. Only the
+/// moved task changes; a list too crowded for a key is rebalanced first.
+fn reorder_task(
+    inner: &Inner,
+    store: &mut Store,
+    task_id: Id,
+    after: Option<Id>,
+    before: Option<Id>,
+) -> Result<(), IpcError> {
+    let space = inner.space_id;
+    let task = store
+        .task(task_id)
+        .map_err(error)?
+        .ok_or(IpcError::NotFound { id: uuid(task_id) })?;
+    let position_of = |store: &Store, t: Option<Id>| -> Result<Option<String>, IpcError> {
+        match t {
+            None => Ok(None),
+            Some(t) => store
+                .task(t)
+                .map_err(error)?
+                .map(|t| Some(t.position))
+                .ok_or(IpcError::NotFound { id: uuid(t) }),
+        }
+    };
+    let lo = position_of(store, after)?;
+    let hi = position_of(store, before)?;
+    let key = match crate::fractional::between(lo.as_deref(), hi.as_deref()) {
+        Some(k) if !crate::fractional::needs_rebalance([k.as_str()]) => k,
+        _ => {
+            // Rebalance every sibling in the same list, then place the task.
+            let siblings = store
+                .tasks(
+                    space,
+                    &TaskFilter {
+                        list: Some(task.list_id),
+                        include_completed: true,
+                        ..Default::default()
+                    },
+                )
+                .map_err(error)?;
+            let mut order: Vec<Id> = siblings
+                .iter()
+                .map(|t| t.id)
+                .filter(|t| *t != task_id)
+                .collect();
+            let index = match (after, before) {
+                (Some(a), _) => order
+                    .iter()
+                    .position(|t| *t == a)
+                    .map(|i| i + 1)
+                    .unwrap_or(order.len()),
+                (None, Some(b)) => order.iter().position(|t| *t == b).unwrap_or(0),
+                (None, None) => order.len(),
+            };
+            order.insert(index.min(order.len()), task_id);
+            let keys = crate::fractional::rebalanced(order.len());
+            let ops: Vec<crate::op::Op> = order
+                .iter()
+                .zip(keys)
+                .map(|(t, k)| {
+                    store.op(
+                        space,
+                        EntityType::Task,
+                        *t,
+                        Mutation::Set {
+                            field: Field::Position,
+                            value: Value::from(k),
+                        },
+                    )
+                })
+                .collect();
+            store.commit(&ops).map_err(error)?;
+            return Ok(());
+        }
+    };
+    let op = store.op(
+        space,
+        EntityType::Task,
+        task_id,
+        Mutation::Set {
+            field: Field::Position,
+            value: Value::from(key),
+        },
+    );
+    store.commit(std::slice::from_ref(&op)).map_err(error)
 }

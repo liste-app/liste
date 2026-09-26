@@ -6,7 +6,20 @@ use serde::{Deserialize, Serialize};
 use super::Result;
 use crate::ids::Id;
 use crate::model::{List, Priority, Space, Tag, Task};
+
 use crate::op::Op;
+
+/// How a task list is ordered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TaskOrder {
+    /// The person's manual order, then id.
+    #[default]
+    Manual,
+    /// Soonest due first, undated last, then manual order.
+    DueThenManual,
+    /// Most recently completed first.
+    CompletedDesc,
+}
 
 /// Which tasks to list. Defaults to every live, incomplete task in the space.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -15,10 +28,19 @@ pub struct TaskFilter {
     pub list: Option<Option<Id>>,
     /// Only direct subtasks of this task.
     pub parent: Option<Id>,
+    /// Only tasks carrying this tag.
+    pub tag: Option<Id>,
+    pub priority: Option<Priority>,
+    pub status: Option<String>,
     /// Only tasks due in `[from, to)` (Unix milliseconds).
     pub due_between: Option<(i64, i64)>,
+    /// Only tasks with a reminder set.
+    pub has_reminder: bool,
     pub include_completed: bool,
+    /// Only completed tasks.
+    pub completed_only: bool,
     pub include_deleted: bool,
+    pub order: TaskOrder,
     /// Zero means no limit.
     pub limit: usize,
 }
@@ -228,14 +250,38 @@ pub(super) fn tasks(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Res
         args.push(Box::new(to));
         where_sql.push_str(&format!(" AND tasks.due_at < ?{}", args.len()));
     }
-    if !filter.include_completed {
+    if let Some(tag) = filter.tag {
+        args.push(Box::new(tag));
+        where_sql.push_str(&format!(
+            " AND EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = tasks.id AND tt.tag_id = ?{})",
+            args.len()
+        ));
+    }
+    if let Some(priority) = filter.priority {
+        args.push(Box::new(priority as i64));
+        where_sql.push_str(&format!(" AND tasks.priority = ?{}", args.len()));
+    }
+    if let Some(status) = &filter.status {
+        args.push(Box::new(status.clone()));
+        where_sql.push_str(&format!(" AND tasks.status = ?{}", args.len()));
+    }
+    if filter.has_reminder {
+        where_sql.push_str(" AND tasks.reminder_at IS NOT NULL");
+    }
+    if filter.completed_only {
+        where_sql.push_str(" AND tasks.completed_at IS NOT NULL");
+    } else if !filter.include_completed {
         where_sql.push_str(" AND tasks.completed_at IS NULL");
     }
     if !filter.include_deleted {
         where_sql.push_str(" AND tasks.deleted_at IS NULL");
     }
-    let mut sql =
-        format!("SELECT {TASK_COLUMNS} FROM tasks WHERE {where_sql} ORDER BY position, id");
+    let order = match filter.order {
+        TaskOrder::Manual => "position, id",
+        TaskOrder::DueThenManual => "due_at IS NULL, due_at, position, id",
+        TaskOrder::CompletedDesc => "completed_at DESC, id",
+    };
+    let mut sql = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE {where_sql} ORDER BY {order}");
     if filter.limit > 0 {
         sql.push_str(&format!(" LIMIT {}", filter.limit));
     }
