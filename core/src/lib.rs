@@ -9,7 +9,9 @@
 //! See `docs/ARCHITECTURE.md` for the design and decision record.
 
 pub mod crypto;
+pub mod hlc;
 pub mod host;
+pub mod ids;
 pub mod importers;
 pub mod model;
 pub mod parse;
