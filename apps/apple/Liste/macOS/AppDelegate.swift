@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         capturePanel = QuickCapturePanel(session: session)
         let reminders = Reminders(session: session)
         self.reminders = reminders
-        session.onRefresh = { [weak reminders] in reminders?.reschedule() }
+        session.onStoreChange = { [weak reminders] in reminders?.reschedule() }
         reminders.reschedule()
         NotificationCenter.default.addObserver(forName: .quickCaptureRequested, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.showQuickCapture() }
@@ -64,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             openMainWindow()
         }
-        #if DEBUG
+        do {
             // `--measure-quick-capture`: show the panel once after launch and
             // log how long it took to appear, for the Section 4 budget.
             if CommandLine.arguments.contains("--measure-quick-capture") {
@@ -80,39 +80,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self?.measureScroll()
                 }
             }
-        #endif
+        }
     }
 
-    #if DEBUG
-        private func measureScroll() {
-            session.selection = .anytime
-            if session.tasks.count < 50_000 {
-                session.populateFixture(tasks: 50_000)
-                session.selection = .anytime
+    private func measureScroll() {
+        session.selection = .today
+        session.populateFixtureIfSmall(50_000)
+        guard let scroll = mainWindow?.contentView?.firstScrollView() else {
+            FileHandle.standardError.write(Data("scroll: no scroll view\n".utf8))
+            return
+        }
+        let meter = FrameMeter()
+        let steps = 240
+        Task { @MainActor in
+            // Let the window settle after the fixture load before timing.
+            try? await Task.sleep(for: .seconds(2))
+            // Opening Anytime from Today: three opens to warm up, then ten
+            // measured; the median is the number reported. Main-thread time
+            // is the thread's CPU time until the run loop goes idle; wall
+            // time is beside it.
+            var opens: [MainThreadTimer.Sample] = []
+            for i in 1...13 {
+                self.session.selection = .today
+                try? await Task.sleep(for: .milliseconds(250))
+                let sample = await MainThreadTimer.measure { self.session.selection = .anytime }
+                if i > 3 { opens.append(sample) }
+                try? await Task.sleep(for: .milliseconds(250))
             }
-            guard let scroll = mainWindow?.contentView?.firstScrollView() else {
-                FileHandle.standardError.write(Data("scroll: no scroll view\n".utf8))
-                return
+            let sorted = opens.sorted { $0.cpuMilliseconds < $1.cpuMilliseconds }
+            let median = sorted[sorted.count / 2]
+            let rows = self.session.count
+            let query = self.session.lastQueryMilliseconds
+            FileHandle.standardError.write(
+                Data(String(format: "open: Anytime with %d rows in %.1f ms main thread (%.1f ms wall to idle), median of %d after 3 warm-ups, queries %.1f ms; all: %@\n",
+                    rows, median.cpuMilliseconds, median.wallMilliseconds, opens.count, query,
+                    opens.map { String(format: "%.1f", $0.cpuMilliseconds) }.joined(separator: " ")).utf8))
+            // A refresh in place, as a change notification causes: the same
+            // rows re-read and redrawn, nothing else moving.
+            var refreshes: [Double] = []
+            for _ in 1...10 {
+                try? await Task.sleep(for: .milliseconds(250))
+                refreshes.append(await MainThreadTimer.measure { self.session.refresh() }.cpuMilliseconds)
             }
-            let meter = FrameMeter()
-            let steps = 240
-            Task { @MainActor in
-                // Let the list settle after the fixture load before timing.
-                try? await Task.sleep(for: .seconds(2))
-                let total = scroll.documentView?.frame.height ?? 0
-                meter.start()
-                for step in 1...steps {
-                    try? await Task.sleep(for: .milliseconds(16))
-                    let y = total * CGFloat(step) / CGFloat(steps)
+            let middle = refreshes.sorted()[refreshes.count / 2]
+            FileHandle.standardError.write(
+                Data(String(format: "refresh: in place in %.1f ms main thread, median of %d; all: %@\n",
+                    middle, refreshes.count, refreshes.map { String(format: "%.1f", $0) }.joined(separator: " ")).utf8))
+            try? await Task.sleep(for: .seconds(1))
+            guard let scroll = self.mainWindow?.contentView?.firstScrollView() else { return }
+            let total = scroll.documentView?.frame.height ?? 0
+            meter.start()
+            var worst = 0.0
+            var sum = 0.0
+            for step in 1...steps {
+                try? await Task.sleep(for: .milliseconds(16))
+                let y = total * CGFloat(step) / CGFloat(steps)
+                let sample = await MainThreadTimer.measure {
                     scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
                     scroll.reflectScrolledClipView(scroll.contentView)
                 }
-                let report = meter.stop()
-                FileHandle.standardError.write(Data("scroll: \(report) over \(self.session.tasks.count) tasks\n".utf8))
-                log.debug("scroll: \(report)")
+                worst = max(worst, sample.cpuMilliseconds)
+                sum += sample.cpuMilliseconds
             }
+            let report = meter.stop()
+            FileHandle.standardError.write(
+                Data(String(format: "scroll: %@ over %d rows; main thread per step avg %.1f ms, worst %.1f ms\n",
+                    report, self.session.count, sum / Double(steps), worst).utf8))
+            log.debug("scroll: \(report)")
         }
-    #endif
+        _ = scroll
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
@@ -298,24 +335,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func showSettings() { SettingsWindow.show(session: session, delegate: self) }
 
     @objc private func completeSelected() {
-        guard let task = session.tasks.first(where: { $0.id == ui.selectedTaskId }) else { return }
+        guard let task = session.find(ui.selectedTaskId) else { return }
         session.setCompleted(task, task.completedAt == nil)
     }
 
     @objc private func renameSelected() { ui.editRequest += 1 }
 
     @objc private func deleteSelected() {
-        guard let task = session.tasks.first(where: { $0.id == ui.selectedTaskId }) else { return }
+        guard let task = session.find(ui.selectedTaskId) else { return }
         session.delete(task)
     }
 
     @objc private func moveUp() {
-        guard let task = session.tasks.first(where: { $0.id == ui.selectedTaskId }) else { return }
+        guard let task = session.find(ui.selectedTaskId) else { return }
         session.move(task, up: true)
     }
 
     @objc private func moveDown() {
-        guard let task = session.tasks.first(where: { $0.id == ui.selectedTaskId }) else { return }
+        guard let task = session.find(ui.selectedTaskId) else { return }
         session.move(task, up: false)
     }
 

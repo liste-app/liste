@@ -6,6 +6,8 @@ iOS and macOS apps: one Xcode project, two targets, one shared Swift package. Sw
 - `ListeKit/`: the shared package. `Sources/ListeKit` holds the view models and platform-neutral code; `Sources/ListeCore` receives the UniFFI-generated Swift bindings; the XCFramework it links lives in `bindings/generated/apple/`.
 - `Liste/macOS/`: the AppKit-hosted SwiftUI app. It is the host process (Section 3): it takes the store lock, opens the store at `~/Library/Application Support/Liste/`, then serves the IPC socket there. It runs with no window when launched with `--background`, drops to the menu bar when the last window closes, and only Quit stops the host.
 
+Lists are windows (Section 4). The session asks the core for a count and then only for the rows a view is about to show, plus a margin; the list itself is an `NSTableView` with rows of one fixed height, so 40,000 rows lay out without measuring any, and each row draws its text in one pass. The board does the same per column. Saved filters are core entities and sync like lists; only view preferences (theme, collapsed groups, column order, the hotkey) live in `UserDefaults`.
+
 Build order:
 
 ```
@@ -42,4 +44,4 @@ Every action has a shortcut, shown in the menus. Keys marked global work with no
 | ⌘0 | Show the main window |
 | j, k, x | Down, up, complete, when vim keys are on in Settings |
 
-Debug builds accept `--measure-quick-capture` and `--measure-scroll`, which log the panel's appearance time and the list's frame rate over the 50,000-task fixture; point `LISTE_DATA_DIR` at a scratch directory first.
+`--measure-quick-capture` logs how long the panel took to appear. `--measure-scroll` fills a scratch store with the 50,000-task fixture, opens Anytime from Today five times and logs the median main-thread time (the thread's CPU time until the run loop goes idle, so the queries, the table update, and AppKit's layout and display of the new rows), then scrolls the whole list and logs the frame rate and the main-thread time per step. Point `LISTE_DATA_DIR` and `LISTE_SOCKET` at a scratch directory first; both flags work in every build.
