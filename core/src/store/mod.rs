@@ -314,23 +314,23 @@ impl Store {
         query::pending_ops(&self.conn, space_id)
     }
 
-    /// Record the `seq` the server assigned to pushed ops and advance the
-    /// cursor past them.
+    /// Record the `seq` the server assigned to pushed ops. The cursor does
+    /// not move: it tracks what has been pulled, and other devices' ops may
+    /// sit between the cursor and a freshly assigned `seq`. The next pull
+    /// returns this device's own ops too, which apply as duplicates.
     pub fn mark_pushed(&mut self, space_id: Id, assigned: &[(Id, u64)]) -> Result<()> {
-        let now = self.clock.current().wall_ms;
         let tx = self.conn.transaction()?;
         for (op_id, seq) in assigned {
             tx.execute(
                 "UPDATE ops SET seq = ?3 WHERE space_id = ?1 AND op_id = ?2",
                 rusqlite::params![space_id, op_id, *seq as i64],
             )?;
-            apply::advance_cursor(&tx, space_id, *seq, now)?;
         }
         tx.commit()?;
         Ok(())
     }
 
-    /// The highest server `seq` this device has seen for the space.
+    /// The highest server `seq` this device has pulled for the space.
     pub fn cursor(&self, space_id: Id) -> Result<u64> {
         query::cursor(&self.conn, space_id)
     }

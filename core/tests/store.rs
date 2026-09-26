@@ -243,7 +243,14 @@ fn pushed_ops_get_their_seq_and_the_cursor_advances() {
         .mark_pushed(space, &[(op1.op_id, 1), (op2.op_id, 2)])
         .unwrap();
     assert!(store.pending_ops(space).unwrap().is_empty());
-    assert_eq!(store.cursor(space).unwrap(), 2);
+    assert_eq!(
+        store.cursor(space).unwrap(),
+        0,
+        "pushing does not move the cursor"
+    );
+    assert_eq!(store.apply_remote(&op1, 1).unwrap(), Applied::Duplicate);
+    assert_eq!(store.apply_remote(&op2, 2).unwrap(), Applied::Duplicate);
+    assert_eq!(store.cursor(space).unwrap(), 2, "pulling does");
     // Ops from the server are logged with their seq and move the cursor.
     let other = Store::open_in_memory(Id::new()).unwrap();
     let mut other = other;
