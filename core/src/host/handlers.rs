@@ -3,8 +3,8 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use liste_ipc::protocol::{
-    DebugRequest, IpcError, ListView, OpView, Request, Response, SpanView, StatusView, TaskPatch,
-    TaskView,
+    DebugRequest, IpcError, ListView, OpView, PreviewView, Request, Response, SpanView, StatusView,
+    TaskPatch, TaskView,
 };
 use uuid::Uuid;
 
@@ -181,6 +181,48 @@ fn dispatch(inner: &Inner, request: Request) -> Result<Response, IpcError> {
                     .collect(),
             }
         }
+        Request::Preview { text, tz: zone } => {
+            let tz = match zone {
+                Some(name) => TimeZone::get(&name).map_err(|_| IpcError::Invalid {
+                    message: format!("unknown time zone {name:?}"),
+                })?,
+                None => tz.clone(),
+            };
+            let now = Timestamp::now().to_zoned(tz.clone());
+            let names: Vec<String> = store
+                .lists(space)
+                .map_err(error)?
+                .into_iter()
+                .map(|l| l.title)
+                .collect();
+            let cap = parse(&text, &Context::new(now, inner.locale, &names));
+            let due = cap.due.map(|d| {
+                let z = crate::recurrence::to_zoned(&d, &tz);
+                if d.time.is_none() {
+                    z.date().to_string()
+                } else {
+                    format!("{} {:02}:{:02}", z.date(), z.hour(), z.minute())
+                }
+            });
+            Response::Preview(PreviewView {
+                title: cap.title.clone(),
+                due,
+                due_all_day: cap.is_all_day(),
+                list: cap.list.as_ref().map(|l| l.name().to_owned()),
+                tags: cap.tags.clone(),
+                priority: priority_name(cap.priority).to_owned(),
+                recurrence: cap.recurrence.as_ref().map(|r| r.to_text()),
+                spans: cap
+                    .spans
+                    .iter()
+                    .map(|s| SpanView {
+                        start: s.start,
+                        end: s.end,
+                        kind: format!("{:?}", s.kind).to_lowercase(),
+                    })
+                    .collect(),
+            })
+        }
         Request::Search { query, limit } => {
             let tasks = store
                 .search(space, &query, limit.clamp(1, 500))
@@ -211,6 +253,18 @@ fn dispatch(inner: &Inner, request: Request) -> Result<Response, IpcError> {
                     space,
                     &TaskFilter {
                         due_between: Some((start, end)),
+                        ..Default::default()
+                    },
+                )
+                .map_err(error)?;
+            Response::Tasks(task_views(store, &tasks, tz).map_err(error)?)
+        }
+        Request::ListTasks { list_id } => {
+            let tasks = store
+                .tasks(
+                    space,
+                    &TaskFilter {
+                        list: Some(list_id.map(id)),
                         ..Default::default()
                     },
                 )

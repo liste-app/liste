@@ -17,6 +17,6 @@ pub mod transport;
 pub use client::{Client, ClientError, READINESS_TIMEOUT};
 pub use paths::Endpoint;
 pub use protocol::{
-    DebugRequest, IpcError, ListView, Message, OpView, PROTOCOL_VERSION, Request, Response,
-    SpanView, StatusView, TaskPatch, TaskView,
+    DebugRequest, IpcError, ListView, Message, OpView, PROTOCOL_VERSION, PreviewView, Request,
+    Response, SpanView, StatusView, TaskPatch, TaskView,
 };

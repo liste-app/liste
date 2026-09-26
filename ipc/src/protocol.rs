@@ -47,6 +47,12 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tz: Option<String>,
     },
+    /// Parse a line without creating anything, for live highlighting.
+    Preview {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tz: Option<String>,
+    },
     Search {
         query: String,
         limit: usize,
@@ -54,6 +60,11 @@ pub enum Request {
     Today,
     Upcoming {
         days: u32,
+    },
+    /// Open tasks in one list, or in the inbox when `list_id` is absent.
+    ListTasks {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        list_id: Option<Uuid>,
     },
     GetTask {
         id: Uuid,
@@ -129,6 +140,7 @@ pub enum Response {
         task: TaskView,
         spans: Vec<SpanView>,
     },
+    Preview(PreviewView),
     Lists(Vec<ListView>),
     Done {
         changed: bool,
@@ -210,6 +222,22 @@ pub struct TaskView {
     pub recurrence: Option<String>,
     pub created_at: i64,
     pub modified_at: i64,
+}
+
+/// What a line would become, before it is captured.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PreviewView {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+    pub due_all_day: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<String>,
+    pub tags: Vec<String>,
+    pub priority: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recurrence: Option<String>,
+    pub spans: Vec<SpanView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
