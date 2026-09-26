@@ -226,6 +226,15 @@ impl Host {
         }
     }
 
+    /// Register a listener called after every change to the store, from
+    /// any path: this process, an IPC client, or (later) sync. Runs on the
+    /// thread that made the change; UIs hop to their main thread.
+    pub fn set_change_listener(&self, listener: Option<crate::store::ChangeListener>) {
+        if let Ok(mut s) = self.inner.store.lock() {
+            s.set_change_listener(listener);
+        }
+    }
+
     /// In-process access to the store, as the GUI has.
     pub fn with_store<R>(&self, f: impl FnOnce(&mut Store) -> R) -> R {
         let mut store = self.inner.store.lock().unwrap_or_else(|e| e.into_inner());

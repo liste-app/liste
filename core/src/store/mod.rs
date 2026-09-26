@@ -83,12 +83,17 @@ impl WallClock for Box<dyn WallClock + Send> {
 }
 
 /// The device's store. One per device; on desktop only the host holds it.
+/// Called after any change to materialized state, from whichever path made
+/// it (a local commit, a pulled op, undo, a restore). UIs refresh on it.
+pub type ChangeListener = std::sync::Arc<dyn Fn() + Send + Sync>;
+
 pub struct Store {
     conn: Connection,
     clock: HlcClock<Box<dyn WallClock + Send>>,
     undo: UndoStack,
     supported_schema: u32,
     locked: bool,
+    on_change: Option<ChangeListener>,
 }
 
 impl Store {
@@ -132,7 +137,20 @@ impl Store {
             undo: UndoStack::default(),
             supported_schema: SCHEMA_VERSION,
             locked: false,
+            on_change: None,
         })
+    }
+
+    /// Register the listener notified after every change; replaces any
+    /// earlier one. It runs on the thread that made the change.
+    pub fn set_change_listener(&mut self, listener: Option<ChangeListener>) {
+        self.on_change = listener;
+    }
+
+    fn changed(&self) {
+        if let Some(l) = &self.on_change {
+            l();
+        }
     }
 
     /// Refuse every read and write of task data until [`unlock`](Self::unlock).
@@ -226,6 +244,9 @@ impl Store {
         let tx = self.conn.transaction()?;
         let outcome = apply::apply_op(&tx, op, None, self.supported_schema, now)?;
         tx.commit()?;
+        if outcome.status == Applied::Applied {
+            self.changed();
+        }
         Ok(outcome.status)
     }
 
@@ -239,6 +260,9 @@ impl Store {
         let outcome = apply::apply_op(&tx, op, Some(seq), self.supported_schema, now)?;
         apply::advance_cursor(&tx, op.space_id, seq, now)?;
         tx.commit()?;
+        if outcome.status == Applied::Applied {
+            self.changed();
+        }
         Ok(outcome.status)
     }
 
@@ -262,6 +286,9 @@ impl Store {
             }
         }
         tx.commit()?;
+        if applied > 0 {
+            self.changed();
+        }
         Ok(applied)
     }
 
@@ -286,6 +313,7 @@ impl Store {
         if !inverses.is_empty() {
             self.undo.record(inverses);
         }
+        self.changed();
         Ok(())
     }
 
@@ -297,6 +325,7 @@ impl Store {
         };
         let redo = self.apply_inverses(&entry)?;
         self.undo.record_redo(redo);
+        self.changed();
         Ok(true)
     }
 
@@ -308,6 +337,7 @@ impl Store {
         };
         let undo = self.apply_inverses(&entry)?;
         self.undo.record_undo(undo);
+        self.changed();
         Ok(true)
     }
 
@@ -354,6 +384,9 @@ impl Store {
         let tx = self.conn.transaction()?;
         let count = apply::reapply_skipped(&tx, space_id, self.supported_schema, now)?;
         tx.commit()?;
+        if count > 0 {
+            self.changed();
+        }
         Ok(count)
     }
 
@@ -509,6 +542,7 @@ impl Store {
         let tx = self.conn.transaction()?;
         snapshot::import(&tx, snapshot, now)?;
         tx.commit()?;
+        self.changed();
         Ok(())
     }
 

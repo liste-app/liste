@@ -8,21 +8,44 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// The installed macOS app, if any.
-pub fn macos_app() -> Option<&'static Path> {
+/// The installed macOS app, if any: `LISTE_APP` (a path, for development
+/// builds and tests), then `/Applications/Liste.app`, then
+/// `~/Applications/Liste.app`.
+pub fn macos_app() -> Option<std::path::PathBuf> {
     if !cfg!(target_os = "macos") {
         return None;
     }
-    let app = Path::new("/Applications/Liste.app");
-    app.exists().then_some(app)
+    let mut candidates = Vec::new();
+    if let Some(p) = std::env::var_os("LISTE_APP") {
+        candidates.push(std::path::PathBuf::from(p));
+    }
+    candidates.push(std::path::PathBuf::from("/Applications/Liste.app"));
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(std::path::PathBuf::from(home).join("Applications/Liste.app"));
+    }
+    candidates
+        .into_iter()
+        .find(|p| p.join("Contents/MacOS").is_dir())
 }
 
 /// Launch a host in the background: the desktop app if installed, else
 /// `daemon_exe daemon`. The caller then polls for the socket.
 pub fn launch_host(daemon_exe: &Path) -> io::Result<()> {
-    if macos_app().is_some() {
-        return Command::new("open")
-            .args(["-g", "-j", "-a", "Liste", "--args", "--background"])
+    if let Some(app) = macos_app() {
+        // `open -g -j`: do not bring the app forward, launch hidden. Apps
+        // launched this way do not inherit the environment, so the two
+        // variables that relocate the store are forwarded explicitly.
+        let mut cmd = Command::new("open");
+        cmd.args(["-g", "-j"]);
+        for var in ["LISTE_DATA_DIR", "LISTE_SOCKET"] {
+            if let Ok(value) = std::env::var(var) {
+                cmd.arg("--env").arg(format!("{var}={value}"));
+            }
+        }
+        return cmd
+            .arg("-a")
+            .arg(&app)
+            .args(["--args", "--background"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

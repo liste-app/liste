@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 use crate::paths::Endpoint;
 use crate::protocol::{
-    Body, DebugRequest, IpcError, ListView, Message, PROTOCOL_VERSION, Request, Response, SpanView,
-    StatusView, TaskPatch, TaskView,
+    Body, DebugRequest, IpcError, ListView, Message, PROTOCOL_VERSION, PreviewView, Request,
+    Response, SpanView, StatusView, TaskPatch, TaskView,
 };
 use crate::transport::{self, Stream};
 
@@ -214,6 +214,18 @@ impl Client {
         }
     }
 
+    pub fn preview(&mut self, text: &str, tz: Option<&str>) -> Result<PreviewView, ClientError> {
+        match self.call(Request::Preview {
+            text: text.to_owned(),
+            tz: tz.map(str::to_owned),
+        })? {
+            Response::Preview(p) => Ok(p),
+            other => Err(ClientError::Protocol(format!(
+                "expected preview, got {other:?}"
+            ))),
+        }
+    }
+
     pub fn search(&mut self, query: &str, limit: usize) -> Result<Vec<TaskView>, ClientError> {
         Client::expect_tasks(self.call(Request::Search {
             query: query.to_owned(),
@@ -227,6 +239,10 @@ impl Client {
 
     pub fn upcoming(&mut self, days: u32) -> Result<Vec<TaskView>, ClientError> {
         Client::expect_tasks(self.call(Request::Upcoming { days })?)
+    }
+
+    pub fn list_tasks(&mut self, list_id: Option<Uuid>) -> Result<Vec<TaskView>, ClientError> {
+        Client::expect_tasks(self.call(Request::ListTasks { list_id })?)
     }
 
     pub fn task(&mut self, id: Uuid) -> Result<TaskView, ClientError> {

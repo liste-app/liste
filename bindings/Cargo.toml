@@ -25,6 +25,11 @@ cli = ["uniffi/cli"]
 [dependencies]
 liste-core.workspace = true
 uniffi.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+liste-ipc.workspace = true
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 wasm-bindgen.workspace = true
