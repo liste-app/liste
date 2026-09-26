@@ -23,3 +23,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[[bench]]
+name = "roundtrip"
+harness = false

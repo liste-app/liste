@@ -41,6 +41,9 @@ fmt:
 bench:
     cargo bench -p liste-core --bench insert
     cargo bench -p liste-core --bench search
+    cargo bench -p liste-core --bench crypto
+    cargo bench -p liste-core --bench parse
+    cargo bench -p liste-cli --bench roundtrip
 
 # Run the CLI. Example: just cli capture "call mom tomorrow 5pm"
 cli *ARGS:

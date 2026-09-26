@@ -83,3 +83,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo bench -p liste-core --bench insert
       - run: cargo bench -p liste-core --bench search
+      - run: cargo bench -p liste-core --bench crypto
+      - run: cargo bench -p liste-core --bench parse
+      - run: cargo bench -p liste-cli --bench roundtrip
