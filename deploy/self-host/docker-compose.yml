@@ -1,0 +1,43 @@
+# Liste self-host stack: sync server, web app shell, PostgreSQL.
+# Reverse proxy and TLS are the host's job (Coolify, Caddy, Traefik, or a tunnel).
+#
+# Liste is in early development. These images are not published yet.
+
+services:
+  server:
+    image: ghcr.io/liste-app/liste-server:latest
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  web:
+    image: ghcr.io/liste-app/liste-web:latest
+    restart: unless-stopped
+    environment:
+      LISTE_WEB_SERVER_URL: ${LISTE_WEB_SERVER_URL}
+    depends_on:
+      - server
+    ports:
+      - "3000:3000"
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: liste
+      POSTGRES_DB: liste
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U liste -d liste"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
