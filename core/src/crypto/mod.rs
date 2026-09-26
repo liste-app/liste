@@ -50,11 +50,13 @@
 //! signed with the user's Ed25519 key so the new device can check it
 //! against the published public key.
 
+pub mod envelope;
 pub mod keys;
 pub mod primitives;
 pub mod recovery;
 pub mod wrap;
 
+pub use envelope::{EncryptedOp, EncryptedSnapshot, OVERHEAD, op_aad, snapshot_aad};
 pub use keys::{RecoveryKey, RootKey, SpaceKey, UserKeyPair, UserPublicKeys};
 pub use recovery::RecoveryKeyError;
 pub use wrap::{Wrapped, WrappedSpaceKey};
