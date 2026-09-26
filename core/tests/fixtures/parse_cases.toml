@@ -1,0 +1,1220 @@
+# Capture parser fixtures. Unless a case says otherwise: now is Wednesday
+# 2026-03-04 10:00 in Europe/Istanbul, the locale is US (month/day, 12-hour
+# clock), and the existing lists are "Work", "Home Improvement", "Errands".
+# A missing key means "absent". Keys: input, title, date, time, tags,
+# priority, list, list_kind (explicit|existing), rule, locale (us|eu|iso),
+# now (YYYY-MM-DDTHH:MM), tz.
+
+# --- the canonical line, in every order ---------------------------------
+[[case]]
+input = "call mom tomorrow 5pm #family !high"
+title = "call mom"
+date = "2026-03-05"
+time = "17:00"
+tags = ["family"]
+priority = "high"
+
+[[case]]
+input = "call mom !high #family 5pm tomorrow"
+title = "call mom"
+date = "2026-03-05"
+time = "17:00"
+tags = ["family"]
+priority = "high"
+
+[[case]]
+input = "#family !high call mom tomorrow at 5pm"
+title = "call mom"
+date = "2026-03-05"
+time = "17:00"
+tags = ["family"]
+priority = "high"
+
+[[case]]
+input = "tomorrow 5pm call mom #family !high"
+title = "call mom"
+date = "2026-03-05"
+time = "17:00"
+tags = ["family"]
+priority = "high"
+
+[[case]]
+input = "call mom tomorrow 5pm #family #urgent !high /Errands"
+title = "call mom"
+date = "2026-03-05"
+time = "17:00"
+tags = ["family", "urgent"]
+priority = "high"
+list = "Errands"
+list_kind = "explicit"
+
+# --- plain titles ---------------------------------------------------------
+[[case]]
+input = "buy milk"
+title = "buy milk"
+
+[[case]]
+input = ""
+title = ""
+
+[[case]]
+input = "   spaced    out   words  "
+title = "spaced out words"
+
+[[case]]
+input = "Call Mom"
+title = "Call Mom"
+
+[[case]]
+input = "çağır annemi yarın"
+title = "çağır annemi yarın"
+
+# --- today, tomorrow, tonight ---------------------------------------------
+[[case]]
+input = "pay rent today"
+title = "pay rent"
+date = "2026-03-04"
+
+[[case]]
+input = "pay rent tomorrow"
+title = "pay rent"
+date = "2026-03-05"
+
+[[case]]
+input = "pay rent tmrw"
+title = "pay rent"
+date = "2026-03-05"
+
+[[case]]
+input = "pay rent tonight"
+title = "pay rent"
+date = "2026-03-04"
+time = "20:00"
+
+[[case]]
+input = "pay rent due tomorrow"
+title = "pay rent"
+date = "2026-03-05"
+
+[[case]]
+input = "pay rent by friday"
+title = "pay rent"
+date = "2026-03-06"
+
+[[case]]
+input = "tomorrow"
+title = ""
+date = "2026-03-05"
+
+[[case]]
+input = "tomorrow tomorrow"
+title = "tomorrow"
+date = "2026-03-05"
+
+[[case]]
+input = "TOMORROW call mom"
+title = "call mom"
+date = "2026-03-05"
+
+# --- weekdays -------------------------------------------------------------
+[[case]]
+input = "dentist thursday"
+title = "dentist"
+date = "2026-03-05"
+
+[[case]]
+input = "dentist on thursday"
+title = "dentist"
+date = "2026-03-05"
+
+[[case]]
+input = "dentist thu"
+title = "dentist"
+date = "2026-03-05"
+
+[[case]]
+input = "dentist friday"
+title = "dentist"
+date = "2026-03-06"
+
+[[case]]
+input = "dentist saturday"
+title = "dentist"
+date = "2026-03-07"
+
+[[case]]
+input = "dentist sunday"
+title = "dentist"
+date = "2026-03-08"
+
+[[case]]
+input = "dentist monday"
+title = "dentist"
+date = "2026-03-09"
+
+[[case]]
+input = "dentist tuesday"
+title = "dentist"
+date = "2026-03-10"
+
+[[case]]
+input = "dentist wednesday"
+title = "dentist"
+date = "2026-03-04"
+
+[[case]]
+input = "dentist wednesday 11am"
+title = "dentist"
+date = "2026-03-04"
+time = "11:00"
+
+[[case]]
+input = "dentist wednesday 9am"
+title = "dentist"
+date = "2026-03-11"
+time = "09:00"
+
+[[case]]
+input = "dentist next wednesday"
+title = "dentist"
+date = "2026-03-11"
+
+[[case]]
+input = "dentist next tuesday"
+title = "dentist"
+date = "2026-03-17"
+
+[[case]]
+input = "dentist this friday"
+title = "dentist"
+date = "2026-03-06"
+
+[[case]]
+input = "dentist next fri 2pm"
+title = "dentist"
+date = "2026-03-13"
+time = "14:00"
+
+[[case]]
+input = "buy sun cream"
+title = "buy cream"
+date = "2026-03-08"
+
+# --- relative -------------------------------------------------------------
+[[case]]
+input = "follow up in 3 days"
+title = "follow up"
+date = "2026-03-07"
+
+[[case]]
+input = "follow up in three days"
+title = "follow up"
+date = "2026-03-07"
+
+[[case]]
+input = "follow up in 2 weeks"
+title = "follow up"
+date = "2026-03-18"
+
+[[case]]
+input = "follow up in a week"
+title = "follow up"
+date = "2026-03-11"
+
+[[case]]
+input = "follow up in 1 month"
+title = "follow up"
+date = "2026-04-04"
+
+[[case]]
+input = "renew in 1 year"
+title = "renew"
+date = "2027-03-04"
+
+[[case]]
+input = "call back in 2 hours"
+title = "call back"
+date = "2026-03-04"
+time = "12:00"
+
+[[case]]
+input = "call back in 30 minutes"
+title = "call back"
+date = "2026-03-04"
+time = "10:30"
+
+[[case]]
+input = "call back in an hour"
+title = "call back"
+date = "2026-03-04"
+time = "11:00"
+
+[[case]]
+input = "call back in 90 minutes"
+title = "call back"
+date = "2026-03-04"
+time = "11:30"
+
+[[case]]
+input = "in the zone"
+title = "in the zone"
+
+# --- explicit dates: month names -------------------------------------------
+[[case]]
+input = "taxes jan 5"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes 5 jan"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes january 5th"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes 5th of january"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes on the 5th of january"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes jan 5 2027"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes jan 5, 2027"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes 5 jan 2027"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes jan 5 2025"
+title = "taxes"
+date = "2025-01-05"
+
+[[case]]
+input = "party march 4"
+title = "party"
+date = "2026-03-04"
+
+[[case]]
+input = "party march 3"
+title = "party"
+date = "2027-03-03"
+
+[[case]]
+input = "party mar 3rd"
+title = "party"
+date = "2027-03-03"
+
+[[case]]
+input = "leap feb 29"
+title = "leap"
+date = "2028-02-29"
+
+[[case]]
+input = "gift dec 25"
+title = "gift"
+date = "2026-12-25"
+
+[[case]]
+input = "gift 25 dec"
+title = "gift"
+date = "2026-12-25"
+
+[[case]]
+input = "gift 25th december"
+title = "gift"
+date = "2026-12-25"
+
+[[case]]
+input = "party feb 30"
+title = "party feb 30"
+
+[[case]]
+input = "party sept 31"
+title = "party sept 31"
+
+[[case]]
+input = "party may 5 at noon"
+title = "party"
+date = "2026-05-05"
+time = "12:00"
+
+# --- explicit dates: numeric ---------------------------------------------
+[[case]]
+input = "taxes 2026-01-05"
+title = "taxes"
+date = "2026-01-05"
+
+[[case]]
+input = "taxes 2027-01-05"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes 1/5"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes 1/5"
+title = "taxes"
+date = "2026-05-01"
+locale = "eu"
+
+[[case]]
+input = "taxes 1/5"
+title = "taxes"
+date = "2027-01-05"
+locale = "iso"
+
+[[case]]
+input = "gift 12/25"
+title = "gift"
+date = "2026-12-25"
+
+[[case]]
+input = "gift 12/25"
+title = "gift"
+date = "2026-12-25"
+locale = "eu"
+
+[[case]]
+input = "gift 25/12"
+title = "gift"
+date = "2026-12-25"
+
+[[case]]
+input = "gift 25/12"
+title = "gift"
+date = "2026-12-25"
+locale = "eu"
+
+[[case]]
+input = "score 13/13"
+title = "score 13/13"
+
+[[case]]
+input = "taxes 1/5/26"
+title = "taxes"
+date = "2026-01-05"
+
+[[case]]
+input = "taxes 1/5/2027"
+title = "taxes"
+date = "2027-01-05"
+
+[[case]]
+input = "taxes 05/01/2026"
+title = "taxes"
+date = "2026-01-05"
+locale = "eu"
+
+[[case]]
+input = "taxes 05/01/2026"
+title = "taxes"
+date = "2026-05-01"
+
+[[case]]
+input = "ratio 3/4 cup"
+title = "ratio cup"
+date = "2026-03-04"
+
+[[case]]
+input = "and/or"
+title = "and/or"
+
+# --- times ----------------------------------------------------------------
+[[case]]
+input = "standup 5pm"
+title = "standup"
+date = "2026-03-04"
+time = "17:00"
+
+[[case]]
+input = "standup 5 pm"
+title = "standup"
+date = "2026-03-04"
+time = "17:00"
+
+[[case]]
+input = "standup at 5pm"
+title = "standup"
+date = "2026-03-04"
+time = "17:00"
+
+[[case]]
+input = "standup 5:30pm"
+title = "standup"
+date = "2026-03-04"
+time = "17:30"
+
+[[case]]
+input = "standup 5:30 PM"
+title = "standup"
+date = "2026-03-04"
+time = "17:30"
+
+[[case]]
+input = "standup 17:00"
+title = "standup"
+date = "2026-03-04"
+time = "17:00"
+
+[[case]]
+input = "standup 9am"
+title = "standup"
+date = "2026-03-05"
+time = "09:00"
+
+[[case]]
+input = "standup 10am"
+title = "standup"
+date = "2026-03-05"
+time = "10:00"
+
+[[case]]
+input = "standup 11am"
+title = "standup"
+date = "2026-03-04"
+time = "11:00"
+
+[[case]]
+input = "standup 12pm"
+title = "standup"
+date = "2026-03-04"
+time = "12:00"
+
+[[case]]
+input = "standup 12am"
+title = "standup"
+date = "2026-03-05"
+time = "00:00"
+
+[[case]]
+input = "standup noon"
+title = "standup"
+date = "2026-03-04"
+time = "12:00"
+
+[[case]]
+input = "standup at midnight"
+title = "standup"
+date = "2026-03-05"
+time = "00:00"
+
+[[case]]
+input = "standup in the morning"
+title = "standup in the"
+date = "2026-03-05"
+time = "09:00"
+
+[[case]]
+input = "standup this evening"
+title = "standup this"
+date = "2026-03-04"
+time = "18:00"
+
+[[case]]
+input = "standup 9:00"
+title = "standup 9:00"
+
+[[case]]
+input = "standup 9:00"
+title = "standup"
+date = "2026-03-05"
+time = "09:00"
+locale = "eu"
+
+[[case]]
+input = "standup at 5"
+title = "standup at 5"
+
+[[case]]
+input = "standup at 5"
+title = "standup"
+date = "2026-03-05"
+time = "05:00"
+locale = "eu"
+
+[[case]]
+input = "standup at 17"
+title = "standup"
+date = "2026-03-04"
+time = "17:00"
+locale = "eu"
+
+[[case]]
+input = "standup at 24"
+title = "standup at 24"
+locale = "eu"
+
+[[case]]
+input = "standup 0:30"
+title = "standup"
+date = "2026-03-05"
+time = "00:30"
+
+[[case]]
+input = "standup 13pm"
+title = "standup 13pm"
+
+[[case]]
+input = "standup 5pm tomorrow"
+title = "standup"
+date = "2026-03-05"
+time = "17:00"
+
+[[case]]
+input = "standup tomorrow at 9am"
+title = "standup"
+date = "2026-03-05"
+time = "09:00"
+
+[[case]]
+input = "standup 5pm 6pm"
+title = "standup 6pm"
+date = "2026-03-04"
+time = "17:00"
+
+[[case]]
+input = "standup 5pmish"
+title = "standup 5pmish"
+
+[[case]]
+input = "sleep 8 hours"
+title = "sleep 8 hours"
+
+# --- tags and priorities --------------------------------------------------
+[[case]]
+input = "call mom #family"
+title = "call mom"
+tags = ["family"]
+
+[[case]]
+input = "#family call mom"
+title = "call mom"
+tags = ["family"]
+
+[[case]]
+input = "plan #q1 #2026goals"
+title = "plan"
+tags = ["q1", "2026goals"]
+
+[[case]]
+input = "call mom #family #Family"
+title = "call mom"
+tags = ["family"]
+
+[[case]]
+input = "learn c# tutorial"
+title = "learn c# tutorial"
+
+[[case]]
+input = "fix issue#42"
+title = "fix issue#42"
+
+[[case]]
+input = "just a # sign"
+title = "just a # sign"
+
+[[case]]
+input = "urgent !high"
+title = "urgent"
+priority = "high"
+
+[[case]]
+input = "!high urgent"
+title = "urgent"
+priority = "high"
+
+[[case]]
+input = "urgent !medium"
+title = "urgent"
+priority = "medium"
+
+[[case]]
+input = "urgent !med"
+title = "urgent"
+priority = "medium"
+
+[[case]]
+input = "urgent !low"
+title = "urgent"
+priority = "low"
+
+[[case]]
+input = "urgent !!!"
+title = "urgent"
+priority = "high"
+
+[[case]]
+input = "urgent !!"
+title = "urgent"
+priority = "medium"
+
+[[case]]
+input = "urgent !"
+title = "urgent !"
+
+[[case]]
+input = "urgent !1"
+title = "urgent"
+priority = "high"
+
+[[case]]
+input = "urgent p1"
+title = "urgent"
+priority = "high"
+
+[[case]]
+input = "urgent P2"
+title = "urgent"
+priority = "medium"
+
+[[case]]
+input = "urgent p3"
+title = "urgent"
+priority = "low"
+
+[[case]]
+input = "urgent p4"
+title = "urgent"
+priority = "none"
+
+[[case]]
+input = "urgent p5"
+title = "urgent p5"
+
+[[case]]
+input = "wow!! great"
+title = "wow!! great"
+
+[[case]]
+input = "!high !low both"
+title = "!low both"
+priority = "high"
+
+[[case]]
+input = "tomorrow !low #a #b"
+title = ""
+date = "2026-03-05"
+priority = "low"
+tags = ["a", "b"]
+
+# --- lists ----------------------------------------------------------------
+[[case]]
+input = "report /Work"
+title = "report"
+list = "Work"
+list_kind = "explicit"
+
+[[case]]
+input = "report /work"
+title = "report"
+list = "Work"
+list_kind = "explicit"
+
+[[case]]
+input = "report @Work"
+title = "report"
+list = "Work"
+list_kind = "explicit"
+
+[[case]]
+input = "report in Work"
+title = "report"
+list = "Work"
+list_kind = "existing"
+
+[[case]]
+input = "report in work"
+title = "report"
+list = "Work"
+list_kind = "existing"
+
+[[case]]
+input = "paint fence in Home Improvement"
+title = "paint fence"
+list = "Home Improvement"
+list_kind = "existing"
+
+[[case]]
+input = "paint fence /Home Improvement"
+title = "paint fence"
+list = "Home Improvement"
+list_kind = "explicit"
+
+[[case]]
+input = "milk /Groceries"
+title = "milk"
+list = "Groceries"
+list_kind = "explicit"
+
+[[case]]
+input = "milk in Groceries"
+title = "milk in Groceries"
+
+[[case]]
+input = "email a@b.com"
+title = "email a@b.com"
+
+[[case]]
+input = "report /Work /Errands"
+title = "report /Errands"
+list = "Work"
+list_kind = "explicit"
+
+[[case]]
+input = "report in Work tomorrow #x"
+title = "report"
+list = "Work"
+list_kind = "existing"
+date = "2026-03-05"
+tags = ["x"]
+
+# --- recurrence -----------------------------------------------------------
+[[case]]
+input = "standup every day"
+title = "standup"
+rule = "FREQ=DAILY"
+date = "2026-03-04"
+
+[[case]]
+input = "standup daily"
+title = "standup"
+rule = "FREQ=DAILY"
+date = "2026-03-04"
+
+[[case]]
+input = "standup every day at 9am"
+title = "standup"
+rule = "FREQ=DAILY"
+date = "2026-03-05"
+time = "09:00"
+
+[[case]]
+input = "standup every day at 11am"
+title = "standup"
+rule = "FREQ=DAILY"
+date = "2026-03-04"
+time = "11:00"
+
+[[case]]
+input = "gym every tuesday"
+title = "gym"
+rule = "FREQ=WEEKLY;BYDAY=TU"
+date = "2026-03-10"
+
+[[case]]
+input = "gym every wednesday"
+title = "gym"
+rule = "FREQ=WEEKLY;BYDAY=WE"
+date = "2026-03-04"
+
+[[case]]
+input = "gym every wednesday 9am"
+title = "gym"
+rule = "FREQ=WEEKLY;BYDAY=WE"
+date = "2026-03-11"
+time = "09:00"
+
+[[case]]
+input = "gym every mon, wed and fri"
+title = "gym"
+rule = "FREQ=WEEKLY;BYDAY=MO,WE,FR"
+date = "2026-03-04"
+
+[[case]]
+input = "gym every monday and thursday"
+title = "gym"
+rule = "FREQ=WEEKLY;BYDAY=MO,TH"
+date = "2026-03-05"
+
+[[case]]
+input = "standup every weekday"
+title = "standup"
+rule = "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+date = "2026-03-04"
+
+[[case]]
+input = "review every 2 weeks"
+title = "review"
+rule = "FREQ=WEEKLY;INTERVAL=2"
+date = "2026-03-04"
+
+[[case]]
+input = "review every other week"
+title = "review"
+rule = "FREQ=WEEKLY;INTERVAL=2"
+date = "2026-03-04"
+
+[[case]]
+input = "review every 2 weeks on friday"
+title = "review"
+rule = "FREQ=WEEKLY;INTERVAL=2;BYDAY=FR"
+date = "2026-03-06"
+
+[[case]]
+input = "review weekly"
+title = "review"
+rule = "FREQ=WEEKLY"
+date = "2026-03-04"
+
+[[case]]
+input = "water plants every 3 days"
+title = "water plants"
+rule = "FREQ=DAILY;INTERVAL=3"
+date = "2026-03-04"
+
+[[case]]
+input = "board meeting every 2nd tuesday"
+title = "board meeting"
+rule = "FREQ=MONTHLY;BYDAY=2TU"
+date = "2026-03-10"
+
+[[case]]
+input = "board meeting every second tuesday of the month"
+title = "board meeting"
+rule = "FREQ=MONTHLY;BYDAY=2TU"
+date = "2026-03-10"
+
+[[case]]
+input = "retro every last friday"
+title = "retro"
+rule = "FREQ=MONTHLY;BYDAY=-1FR"
+date = "2026-03-27"
+
+[[case]]
+input = "rent monthly on the 15th"
+title = "rent"
+rule = "FREQ=MONTHLY;BYMONTHDAY=15"
+date = "2026-03-15"
+
+[[case]]
+input = "rent every month on the 15th"
+title = "rent"
+rule = "FREQ=MONTHLY;BYMONTHDAY=15"
+date = "2026-03-15"
+
+[[case]]
+input = "rent on the 15th of every month"
+title = "rent"
+rule = "FREQ=MONTHLY;BYMONTHDAY=15"
+date = "2026-03-15"
+
+[[case]]
+input = "rent every 15th"
+title = "rent"
+rule = "FREQ=MONTHLY;BYMONTHDAY=15"
+date = "2026-03-15"
+
+[[case]]
+input = "rent every 1st"
+title = "rent"
+rule = "FREQ=MONTHLY;BYMONTHDAY=1"
+date = "2026-04-01"
+
+[[case]]
+input = "pay every 31st"
+title = "pay"
+rule = "FREQ=MONTHLY;BYMONTHDAY=31"
+date = "2026-03-31"
+
+[[case]]
+input = "rent monthly"
+title = "rent"
+rule = "FREQ=MONTHLY;BYMONTHDAY=4"
+date = "2026-03-04"
+
+[[case]]
+input = "rent every month"
+title = "rent"
+rule = "FREQ=MONTHLY;BYMONTHDAY=4"
+date = "2026-03-04"
+
+[[case]]
+input = "rent monthly jan 31"
+title = "rent"
+rule = "FREQ=MONTHLY;BYMONTHDAY=31"
+date = "2027-01-31"
+
+[[case]]
+input = "rent every 3 months"
+title = "rent"
+rule = "FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=4"
+date = "2026-03-04"
+
+[[case]]
+input = "insurance yearly"
+title = "insurance"
+rule = "FREQ=YEARLY"
+date = "2026-03-04"
+
+[[case]]
+input = "insurance every year"
+title = "insurance"
+rule = "FREQ=YEARLY"
+date = "2026-03-04"
+
+[[case]]
+input = "insurance annually on jan 5"
+title = "insurance"
+rule = "FREQ=YEARLY"
+date = "2027-01-05"
+
+[[case]]
+input = "insurance every 2 years"
+title = "insurance"
+rule = "FREQ=YEARLY;INTERVAL=2"
+date = "2026-03-04"
+
+[[case]]
+input = "water plants 3 days after completion"
+title = "water plants"
+rule = "AFTER=P3D"
+date = "2026-03-04"
+
+[[case]]
+input = "water plants every 3 days after completion"
+title = "water plants"
+rule = "AFTER=P3D"
+date = "2026-03-04"
+
+[[case]]
+input = "haircut 2 weeks after completion"
+title = "haircut"
+rule = "AFTER=P14D"
+date = "2026-03-04"
+
+[[case]]
+input = "haircut every week after completion"
+title = "haircut"
+rule = "AFTER=P7D"
+date = "2026-03-04"
+
+[[case]]
+input = "haircut a week after completion"
+title = "haircut"
+rule = "AFTER=P7D"
+date = "2026-03-04"
+
+# The first rule wins; the leftover bare weekday is then an ordinary date.
+[[case]]
+input = "gym every tuesday every thursday"
+title = "gym every"
+rule = "FREQ=WEEKLY;BYDAY=TU"
+date = "2026-03-05"
+
+[[case]]
+input = "every"
+title = "every"
+
+[[case]]
+input = "every now and then"
+title = "every now and then"
+
+[[case]]
+input = "everyday things"
+title = "everyday things"
+
+# --- text that looks like a date but is not --------------------------------
+[[case]]
+input = "book room 2024"
+title = "book room 2024"
+
+[[case]]
+input = "watch the 5th element"
+title = "watch the 5th element"
+
+[[case]]
+input = "buy 5 apples"
+title = "buy 5 apples"
+
+[[case]]
+input = "call 911"
+title = "call 911"
+
+[[case]]
+input = "version 2.0 release"
+title = "version 2.0 release"
+
+[[case]]
+input = "meet at the mall"
+title = "meet at the mall"
+
+[[case]]
+input = "mayday parade"
+title = "mayday parade"
+
+[[case]]
+input = "may the force be with you"
+title = "may the force be with you"
+
+[[case]]
+input = "march on washington"
+title = "march on washington"
+
+[[case]]
+input = "on the 5th floor"
+title = "on the 5th floor"
+
+[[case]]
+input = "read chapter 12"
+title = "read chapter 12"
+
+[[case]]
+input = "the 2nd amendment"
+title = "the 2nd amendment"
+
+[[case]]
+input = "top 10 list"
+title = "top 10 list"
+
+[[case]]
+input = "1990s music"
+title = "1990s music"
+
+[[case]]
+input = "call 555-1234"
+title = "call 555-1234"
+
+[[case]]
+input = "order 2026-13-45"
+title = "order 2026-13-45"
+
+[[case]]
+input = "sunday roast recipe"
+title = "roast recipe"
+date = "2026-03-08"
+
+[[case]]
+input = "nextdoor neighbour"
+title = "nextdoor neighbour"
+
+[[case]]
+input = "next steps"
+title = "next steps"
+
+[[case]]
+input = "in n out"
+title = "in n out"
+
+[[case]]
+input = "at last"
+title = "at last"
+
+[[case]]
+input = "morning pages"
+title = "pages"
+date = "2026-03-05"
+time = "09:00"
+
+# --- timezone and clock edges ---------------------------------------------
+[[case]]
+input = "tomorrow"
+title = ""
+date = "2026-03-05"
+now = "2026-03-04T23:30"
+
+[[case]]
+input = "in 1 hour"
+title = ""
+date = "2026-03-05"
+time = "00:30"
+now = "2026-03-04T23:30"
+
+[[case]]
+input = "call 11pm"
+title = "call"
+date = "2026-03-05"
+time = "23:00"
+now = "2026-03-04T23:30"
+
+[[case]]
+input = "in 1 hour"
+title = ""
+date = "2026-03-08"
+time = "03:30"
+now = "2026-03-08T01:30"
+tz = "America/New_York"
+
+[[case]]
+input = "in 2 hours"
+title = ""
+date = "2026-11-01"
+time = "01:30"
+now = "2026-11-01T00:30"
+tz = "America/New_York"
+
+[[case]]
+input = "wednesday"
+title = ""
+date = "2026-03-04"
+now = "2026-03-04T23:59"
+
+[[case]]
+input = "feb 29"
+title = ""
+date = "2032-02-29"
+now = "2028-03-01T09:00"
+
+[[case]]
+input = "feb 29"
+title = ""
+date = "2028-02-29"
+now = "2028-02-29T09:00"
+
+[[case]]
+input = "dec 31 5pm"
+title = ""
+date = "2026-12-31"
+time = "17:00"
+now = "2026-12-31T18:00"
+
+[[case]]
+input = "jan 1"
+title = ""
+date = "2027-01-01"
+now = "2026-12-31T18:00"
+
+[[case]]
+input = "monday"
+title = ""
+date = "2026-03-09"
+now = "2026-03-09T08:00"
+
+[[case]]
+input = "monday 7am"
+title = ""
+date = "2026-03-16"
+time = "07:00"
+now = "2026-03-09T08:00"
+
+[[case]]
+input = "5pm"
+title = ""
+date = "2026-03-04"
+time = "17:00"
+now = "2026-03-04T16:59"
+
+[[case]]
+input = "5pm"
+title = ""
+date = "2026-03-05"
+time = "17:00"
+now = "2026-03-04T17:00"
