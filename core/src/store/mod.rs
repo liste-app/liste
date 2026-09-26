@@ -46,6 +46,13 @@ pub enum StoreError {
     WrongSpace { expected: Id, found: Id },
     #[error("snapshot format version {0} is not supported")]
     SnapshotVersion(u32),
+    #[error(
+        "snapshot not ready: {unpushed} op(s) not yet pushed and {ahead_of_cursor} pushed op(s) not yet pulled back; sync first"
+    )]
+    SnapshotNotReady {
+        unpushed: usize,
+        ahead_of_cursor: usize,
+    },
 }
 
 /// Result alias for store operations.
@@ -398,7 +405,26 @@ impl Store {
     // ---- Snapshots -------------------------------------------------------
 
     /// Export the space's materialized state at the current cursor.
+    ///
+    /// Only allowed when every local op has been pushed and pulled back, so
+    /// the state is exactly a replay of the server's log through the
+    /// cursor. Otherwise returns [`StoreError::SnapshotNotReady`]; the sync
+    /// runner pushes, pulls, and retries.
     pub fn snapshot(&self, space_id: Id) -> Result<Snapshot> {
+        let (unpushed, ahead_of_cursor) = query::ops_not_covered_by_cursor(&self.conn, space_id)?;
+        if unpushed > 0 || ahead_of_cursor > 0 {
+            return Err(StoreError::SnapshotNotReady {
+                unpushed,
+                ahead_of_cursor,
+            });
+        }
+        snapshot::export(&self.conn, space_id)
+    }
+
+    /// Export without the readiness check. For tests and the debug harness;
+    /// never uploaded.
+    #[doc(hidden)]
+    pub fn snapshot_unchecked(&self, space_id: Id) -> Result<Snapshot> {
         snapshot::export(&self.conn, space_id)
     }
 
@@ -417,5 +443,13 @@ impl Store {
     #[doc(hidden)]
     pub fn connection(&self) -> &Connection {
         &self.conn
+    }
+
+    /// The query plan SQLite chooses for [`search`](Self::search), one line
+    /// per step. Tests pin the plan so a SQLite upgrade cannot quietly turn
+    /// the FTS scan into one probe per task.
+    #[doc(hidden)]
+    pub fn search_plan(&self) -> Result<Vec<String>> {
+        query::search_plan(&self.conn)
     }
 }

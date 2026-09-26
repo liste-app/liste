@@ -6,7 +6,7 @@ use common::{Device, Server, apply_all, sync};
 use liste_core::ids::Id;
 use liste_core::model::{EntityType, Field, Value};
 use liste_core::op::{Mutation, Op};
-use liste_core::store::Applied;
+use liste_core::store::{Applied, StoreError};
 
 fn two_devices_sharing_a_task() -> (Device, Device, Server, Id, Id) {
     let mut a = Device::new(1, 1_000);
@@ -177,10 +177,30 @@ fn snapshot_plus_tail_equals_full_replay() {
         ),
     ];
     a.store.commit(&more).unwrap();
+    // A snapshot is only taken once nothing is unpushed and everything
+    // pushed has been pulled back, so its position is a true replay point.
+    match a.store.snapshot(space) {
+        Err(StoreError::SnapshotNotReady { unpushed, .. }) => assert!(unpushed > 0),
+        other => panic!("expected not-ready, got {other:?}"),
+    }
+    let pending = a.store.pending_ops(space).unwrap();
+    let assigned = server.push(&pending);
+    a.store.mark_pushed(space, &assigned).unwrap();
+    match a.store.snapshot(space) {
+        Err(StoreError::SnapshotNotReady {
+            unpushed,
+            ahead_of_cursor,
+        }) => {
+            assert_eq!(unpushed, 0);
+            assert!(ahead_of_cursor > 0, "pushed but not pulled back yet");
+        }
+        other => panic!("expected not-ready, got {other:?}"),
+    }
     sync(&mut a, &mut server, space);
     let snapshot_seq = a.store.cursor(space).unwrap();
     let snapshot = a.store.snapshot(space).unwrap();
     assert_eq!(snapshot.seq, snapshot_seq);
+    assert_eq!(snapshot_seq, server.log.len() as u64);
     // The tail: more history after the snapshot, including edits to rows the
     // snapshot already holds and a re-add of the removed tag.
     a.advance(5);

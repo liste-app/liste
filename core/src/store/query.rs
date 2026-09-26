@@ -260,6 +260,20 @@ fn fts_query(text: &str) -> String {
 /// `CROSS JOIN` pins the join order: the FTS scan drives and each hit is a
 /// primary-key lookup. Left to itself, the bundled SQLite starts from the
 /// `tasks` index and probes FTS once per task, which is quadratic.
+fn search_sql() -> String {
+    format!(
+        "SELECT {} FROM tasks_fts f CROSS JOIN tasks t ON t.rid = f.rowid
+         WHERE f.tasks_fts MATCH ?1 AND t.space_id = ?2 AND t.deleted_at IS NULL
+         ORDER BY f.rowid DESC
+         LIMIT ?3",
+        TASK_COLUMNS
+            .split(',')
+            .map(|c| format!("t.{}", c.trim()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 pub(super) fn search(
     conn: &Connection,
     space_id: Id,
@@ -270,22 +284,32 @@ pub(super) fn search(
     if query.is_empty() {
         return Ok(Vec::new());
     }
-    let mut stmt = conn.prepare_cached(&format!(
-        "SELECT {} FROM tasks_fts f CROSS JOIN tasks t ON t.rid = f.rowid
-         WHERE f.tasks_fts MATCH ?1 AND t.space_id = ?2 AND t.deleted_at IS NULL
-         ORDER BY f.rowid DESC
-         LIMIT ?3",
-        TASK_COLUMNS
-            .split(',')
-            .map(|c| format!("t.{}", c.trim()))
-            .collect::<Vec<_>>()
-            .join(", ")
-    ))?;
+    let mut stmt = conn.prepare_cached(&search_sql())?;
     let mut tasks: Vec<Task> = stmt
         .query_map(params![query, space_id, limit as i64], task_from_row)?
         .collect::<rusqlite::Result<_>>()?;
     fill_tags(conn, &mut tasks)?;
     Ok(tasks)
+}
+
+pub(super) fn search_plan(conn: &Connection) -> Result<Vec<String>> {
+    let sql = format!("EXPLAIN QUERY PLAN {}", search_sql());
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params!["\"c\"*", Id::NIL, 50i64], |r| r.get::<_, String>(3))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Counts of ops the cursor does not cover: not yet pushed (no `seq`), and
+/// pushed with a `seq` beyond what has been pulled.
+pub(super) fn ops_not_covered_by_cursor(conn: &Connection, space_id: Id) -> Result<(usize, usize)> {
+    let cursor = cursor(conn, space_id)? as i64;
+    let unpushed: i64 = conn
+        .prepare_cached("SELECT count(*) FROM ops WHERE space_id = ?1 AND seq IS NULL")?
+        .query_row(params![space_id], |r| r.get(0))?;
+    let ahead: i64 = conn
+        .prepare_cached("SELECT count(*) FROM ops WHERE space_id = ?1 AND seq > ?2")?
+        .query_row(params![space_id, cursor], |r| r.get(0))?;
+    Ok((unpushed as usize, ahead as usize))
 }
 
 pub(super) fn space_state(conn: &Connection, space_id: Id) -> Result<SpaceState> {
