@@ -170,6 +170,27 @@ pub const MIGRATIONS: &[&str] = &[
         depth = coalesce((SELECT depth FROM outline WHERE outline.id = tasks.id), 0);
     DROP TABLE outline;
     "#,
+    // 3: saved filters (Section 5), an entity like lists. Criteria columns
+    // are named after their fields; NULL means the criterion is off.
+    r#"
+    CREATE TABLE filters (
+        id                BLOB    PRIMARY KEY,
+        space_id          BLOB    NOT NULL,
+        name              TEXT    NOT NULL DEFAULT '',
+        position          TEXT    NOT NULL DEFAULT 'V',
+        list_id           BLOB,
+        tag_id            BLOB,
+        filter_priority   INTEGER,
+        filter_status     TEXT,
+        due_from_day      INTEGER,
+        due_to_day        INTEGER,
+        include_completed INTEGER NOT NULL DEFAULT 0,
+        created_at        INTEGER NOT NULL DEFAULT 0,
+        modified_at       INTEGER NOT NULL DEFAULT 0,
+        deleted_at        INTEGER
+    ) WITHOUT ROWID;
+    CREATE INDEX filters_space ON filters (space_id, position);
+    "#,
 ];
 
 /// Apply every migration the database has not seen. Returns the versions

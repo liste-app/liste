@@ -209,7 +209,8 @@ impl Store {
         mutation: Mutation,
     ) -> Op {
         Op {
-            schema_version: self.supported_schema.min(SCHEMA_VERSION),
+            schema_version: Op::required_schema_version(entity_type, &mutation)
+                .min(self.supported_schema.max(1)),
             op_id: Id::new(),
             space_id,
             device_id: self.device(),
@@ -462,6 +463,17 @@ impl Store {
     pub fn lists(&self, space_id: Id) -> Result<Vec<crate::model::List>> {
         self.check_unlocked()?;
         query::lists(&self.conn, space_id)
+    }
+
+    pub fn filter(&self, id: Id) -> Result<Option<crate::model::Filter>> {
+        self.check_unlocked()?;
+        query::filter(&self.conn, id)
+    }
+
+    /// Live saved filters in a space in manual order.
+    pub fn filters(&self, space_id: Id) -> Result<Vec<crate::model::Filter>> {
+        self.check_unlocked()?;
+        query::filters(&self.conn, space_id)
     }
 
     pub fn tag(&self, id: Id) -> Result<Option<crate::model::Tag>> {

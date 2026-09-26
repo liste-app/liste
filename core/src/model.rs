@@ -1,7 +1,7 @@
 //! The data model (Sections 3, 5, and 6).
 //!
-//! Four entity kinds live in a space: lists, tasks (a subtask is a task
-//! with a parent), and tags, plus the space itself. Every field that an op
+//! Five entity kinds live in a space: lists, tasks (a subtask is a task
+//! with a parent), tags, and saved filters, plus the space itself. Every field that an op
 //! can touch is a [`Field`] with an explicit [`MergeClass`]; the apply
 //! function in [`crate::store`] dispatches on that class and nothing else.
 //!
@@ -20,6 +20,12 @@
 //!   largest wall time of any op applied to the entity, so it converges.
 //! - The recurrence rule is stored as opaque text here; interpreting it is
 //!   the recurrence module's job.
+//! - A saved filter (Section 5) is an entity like a list, so it syncs and
+//!   undoes like one. Its criteria are optional scalars: a list, a tag, a
+//!   priority, a status, and a due window in whole days from today, each
+//!   absent when it does not filter. Fields that share a name with a task
+//!   field but need a different type (`filter_priority`, `filter_status`)
+//!   are their own fields, because a field's type is fixed everywhere.
 
 use serde::{Deserialize, Serialize};
 
@@ -33,15 +39,21 @@ pub enum EntityType {
     List,
     Task,
     Tag,
+    Filter,
+    /// A kind this build does not know. An op for it is stored and skipped
+    /// (its `schema_version` is newer), never rejected.
+    #[serde(other)]
+    Unknown,
 }
 
 impl EntityType {
-    /// Every entity kind, for iteration.
-    pub const ALL: [EntityType; 4] = [
+    /// Every known entity kind, for iteration.
+    pub const ALL: [EntityType; 5] = [
         EntityType::Space,
         EntityType::List,
         EntityType::Task,
         EntityType::Tag,
+        EntityType::Filter,
     ];
 
     /// The stable text name used in ops and in SQLite.
@@ -51,6 +63,17 @@ impl EntityType {
             EntityType::List => "list",
             EntityType::Task => "task",
             EntityType::Tag => "tag",
+            EntityType::Filter => "filter",
+            EntityType::Unknown => "unknown",
+        }
+    }
+
+    /// The op format version that introduced this kind.
+    pub fn schema_version(self) -> u32 {
+        match self {
+            EntityType::Space | EntityType::List | EntityType::Task | EntityType::Tag => 1,
+            EntityType::Filter => 2,
+            EntityType::Unknown => u32::MAX,
         }
     }
 }
@@ -107,6 +130,13 @@ pub enum Field {
     CompletedAt,
     Recurrence,
     Tags,
+    // Filter (op format version 2)
+    TagId,
+    FilterPriority,
+    FilterStatus,
+    DueFromDay,
+    DueToDay,
+    IncludeCompleted,
 }
 
 impl Field {
@@ -130,6 +160,25 @@ impl Field {
             Field::CompletedAt => "completed_at",
             Field::Recurrence => "recurrence",
             Field::Tags => "tags",
+            Field::TagId => "tag_id",
+            Field::FilterPriority => "filter_priority",
+            Field::FilterStatus => "filter_status",
+            Field::DueFromDay => "due_from_day",
+            Field::DueToDay => "due_to_day",
+            Field::IncludeCompleted => "include_completed",
+        }
+    }
+
+    /// The op format version that introduced this field.
+    pub fn schema_version(self) -> u32 {
+        match self {
+            Field::TagId
+            | Field::FilterPriority
+            | Field::FilterStatus
+            | Field::DueFromDay
+            | Field::DueToDay
+            | Field::IncludeCompleted => 2,
+            _ => 1,
         }
     }
 
@@ -152,7 +201,13 @@ impl Field {
             | Field::Priority
             | Field::Status
             | Field::CompletedAt
-            | Field::Recurrence => MergeClass::LwwScalar,
+            | Field::Recurrence
+            | Field::TagId
+            | Field::FilterPriority
+            | Field::FilterStatus
+            | Field::DueFromDay
+            | Field::DueToDay
+            | Field::IncludeCompleted => MergeClass::LwwScalar,
         }
     }
 
@@ -162,13 +217,17 @@ impl Field {
             Field::Kind | Field::Title | Field::Name | Field::Status => ValueType::Text,
             Field::Position => ValueType::Text,
             Field::Notes => ValueType::Text,
-            Field::Recurrence => ValueType::OptionalText,
+            Field::Recurrence | Field::FilterStatus => ValueType::OptionalText,
             Field::CreatedAt | Field::Priority => ValueType::Int,
-            Field::DeletedAt | Field::DueAt | Field::ReminderAt | Field::CompletedAt => {
-                ValueType::OptionalInt
-            }
-            Field::DueAllDay => ValueType::Bool,
-            Field::ListId | Field::ParentId => ValueType::OptionalId,
+            Field::DeletedAt
+            | Field::DueAt
+            | Field::ReminderAt
+            | Field::CompletedAt
+            | Field::FilterPriority
+            | Field::DueFromDay
+            | Field::DueToDay => ValueType::OptionalInt,
+            Field::DueAllDay | Field::IncludeCompleted => ValueType::Bool,
+            Field::ListId | Field::ParentId | Field::TagId => ValueType::OptionalId,
             Field::Tags => ValueType::OptionalId,
         }
     }
@@ -182,7 +241,24 @@ impl Field {
                 Field::Title | Field::Position | Field::CreatedAt | Field::DeletedAt
             ),
             EntityType::Tag => matches!(self, Field::Name | Field::CreatedAt | Field::DeletedAt),
-            EntityType::Task => !matches!(self, Field::Kind | Field::Name),
+            EntityType::Task => {
+                !matches!(self, Field::Kind | Field::Name) && self.schema_version() == 1
+            }
+            EntityType::Filter => matches!(
+                self,
+                Field::Name
+                    | Field::Position
+                    | Field::CreatedAt
+                    | Field::DeletedAt
+                    | Field::ListId
+                    | Field::TagId
+                    | Field::FilterPriority
+                    | Field::FilterStatus
+                    | Field::DueFromDay
+                    | Field::DueToDay
+                    | Field::IncludeCompleted
+            ),
+            EntityType::Unknown => false,
         }
     }
 
@@ -204,7 +280,7 @@ impl Field {
             Field::Status => Value::Text("open".into()),
             Field::Position => Value::Text(crate::fractional::FIRST.into()),
             Field::CreatedAt | Field::Priority => Value::Int(0),
-            Field::DueAllDay => Value::Bool(false),
+            Field::DueAllDay | Field::IncludeCompleted => Value::Bool(false),
             Field::Recurrence
             | Field::DeletedAt
             | Field::DueAt
@@ -212,12 +288,17 @@ impl Field {
             | Field::CompletedAt
             | Field::ListId
             | Field::ParentId
-            | Field::Tags => Value::Null,
+            | Field::Tags
+            | Field::TagId
+            | Field::FilterPriority
+            | Field::FilterStatus
+            | Field::DueFromDay
+            | Field::DueToDay => Value::Null,
         }
     }
 
     /// All fields, for iteration.
-    pub const ALL: [Field; 17] = [
+    pub const ALL: [Field; 23] = [
         Field::Kind,
         Field::Title,
         Field::Name,
@@ -235,6 +316,12 @@ impl Field {
         Field::CompletedAt,
         Field::Recurrence,
         Field::Tags,
+        Field::TagId,
+        Field::FilterPriority,
+        Field::FilterStatus,
+        Field::DueFromDay,
+        Field::DueToDay,
+        Field::IncludeCompleted,
     ];
 }
 
@@ -376,6 +463,27 @@ pub struct Tag {
     pub deleted_at: Option<i64>,
 }
 
+/// A saved filter, materialized. Every criterion is optional; `None`
+/// does not filter. The due window is `[today + due_from_day, today +
+/// due_to_day)` in whole days of the reader's zone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Filter {
+    pub id: Id,
+    pub space_id: Id,
+    pub name: String,
+    pub position: String,
+    pub list_id: Option<Id>,
+    pub tag_id: Option<Id>,
+    pub priority: Option<Priority>,
+    pub status: Option<String>,
+    pub due_from_day: Option<i64>,
+    pub due_to_day: Option<i64>,
+    pub include_completed: bool,
+    pub created_at: i64,
+    pub modified_at: i64,
+    pub deleted_at: Option<i64>,
+}
+
 /// A task or subtask, materialized. `tags` is sorted by id.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
@@ -437,6 +545,22 @@ mod tests {
         assert!(Field::Title.settable(EntityType::Task));
         assert!(!Field::Title.settable(EntityType::Tag));
         assert!(Field::Name.settable(EntityType::Tag));
+        assert!(Field::FilterPriority.settable(EntityType::Filter));
+        assert!(!Field::FilterPriority.settable(EntityType::Task));
+        assert!(!Field::Title.settable(EntityType::Filter));
+        assert!(!Field::Name.settable(EntityType::Unknown));
+    }
+
+    #[test]
+    fn unknown_entity_kinds_decode_as_unknown() {
+        assert_eq!(
+            serde_json::from_str::<EntityType>("\"filter\"").unwrap(),
+            EntityType::Filter
+        );
+        assert_eq!(
+            serde_json::from_str::<EntityType>("\"reminder_rule\"").unwrap(),
+            EntityType::Unknown
+        );
     }
 
     #[test]

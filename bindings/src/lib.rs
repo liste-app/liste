@@ -22,7 +22,7 @@ mod native {
 
     use liste_core::host::{Host, HostConfig, HostError};
     use liste_core::parse::Locale;
-    use liste_ipc::protocol::{DebugRequest, TagView, TaskQuery};
+    use liste_ipc::protocol::{DebugRequest, FilterDefinition, FilterView, TagView, TaskQuery};
     use liste_ipc::protocol::{IpcError, Request, Response};
     use liste_ipc::{Endpoint, ListView, PreviewView, SpanView, TaskView};
 
@@ -141,6 +141,67 @@ mod native {
         }
     }
 
+    /// A saved filter (Section 5): an entity like a list, so it syncs and
+    /// undoes like one. Absent criteria do not filter; the due window is
+    /// whole days from today.
+    #[derive(Debug, Clone, uniffi::Record)]
+    pub struct SavedFilter {
+        pub id: String,
+        pub name: String,
+        pub definition: FilterCriteria,
+    }
+
+    /// What a saved filter selects.
+    #[derive(Debug, Clone, Default, uniffi::Record)]
+    pub struct FilterCriteria {
+        #[uniffi(default = None)]
+        pub list_id: Option<String>,
+        #[uniffi(default = None)]
+        pub tag_id: Option<String>,
+        #[uniffi(default = None)]
+        pub priority: Option<String>,
+        #[uniffi(default = None)]
+        pub status: Option<String>,
+        #[uniffi(default = None)]
+        pub due_from_day: Option<i64>,
+        #[uniffi(default = None)]
+        pub due_to_day: Option<i64>,
+        #[uniffi(default = false)]
+        pub include_completed: bool,
+    }
+
+    impl FilterCriteria {
+        fn into_ipc(self) -> Result<FilterDefinition, ListeError> {
+            Ok(FilterDefinition {
+                list_id: self.list_id.as_deref().map(uuid).transpose()?,
+                tag_id: self.tag_id.as_deref().map(uuid).transpose()?,
+                priority: self.priority,
+                status: self.status,
+                due_from_day: self.due_from_day,
+                due_to_day: self.due_to_day,
+                include_completed: self.include_completed,
+            })
+        }
+    }
+
+    impl From<FilterView> for SavedFilter {
+        fn from(f: FilterView) -> Self {
+            SavedFilter {
+                id: f.id.to_string(),
+                name: f.name,
+                definition: FilterCriteria {
+                    list_id: f.definition.list_id.map(|l| l.to_string()),
+                    tag_id: f.definition.tag_id.map(|t| t.to_string()),
+                    priority: f.definition.priority,
+                    status: f.definition.status,
+                    due_from_day: f.definition.due_from_day,
+                    due_to_day: f.definition.due_to_day,
+                    include_completed: f.definition.include_completed,
+                },
+            }
+        }
+    }
+
     /// A filter over tasks; absent fields do not filter. `order` is
     /// `manual`, `due`, or `completed`. `due_from_day` and `due_to_day`
     /// are whole days from today in the host's zone (today is
@@ -148,6 +209,10 @@ mod native {
     /// computes a day boundary. `offset` and `limit` pick a window.
     #[derive(Debug, Clone, Default, uniffi::Record)]
     pub struct Query {
+        /// A saved filter's criteria, evaluated by the core; the other
+        /// fields narrow it.
+        #[uniffi(default = None)]
+        pub filter_id: Option<String>,
         #[uniffi(default = None)]
         pub list_id: Option<String>,
         #[uniffi(default = false)]
@@ -185,6 +250,7 @@ mod native {
     impl Query {
         fn into_ipc(self) -> Result<TaskQuery, ListeError> {
             Ok(TaskQuery {
+                filter_id: self.filter_id.as_deref().map(uuid).transpose()?,
                 list_id: self.list_id.as_deref().map(uuid).transpose()?,
                 inbox: self.inbox,
                 tag_id: self.tag_id.as_deref().map(uuid).transpose()?,
@@ -583,6 +649,55 @@ mod native {
         /// Delete a list; its tasks move to the inbox.
         pub fn delete_list(&self, id: String) -> Result<(), ListeError> {
             self.handle(Request::DeleteList { id: uuid(&id)? })?;
+            Ok(())
+        }
+
+        /// Saved filters in manual order.
+        pub fn filters(&self) -> Result<Vec<SavedFilter>, ListeError> {
+            match self.handle(Request::Filters)? {
+                Response::Filters(f) => Ok(f.into_iter().map(Into::into).collect()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        pub fn create_filter(
+            &self,
+            name: String,
+            definition: FilterCriteria,
+        ) -> Result<SavedFilter, ListeError> {
+            match self.handle(Request::CreateFilter {
+                name,
+                definition: definition.into_ipc()?,
+            })? {
+                Response::Filter(f) => Ok(f.into()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Rename, redefine, or move a saved filter; absent parts are kept.
+        pub fn update_filter(
+            &self,
+            id: String,
+            name: Option<String>,
+            definition: Option<FilterCriteria>,
+            after: Option<String>,
+            before: Option<String>,
+        ) -> Result<SavedFilter, ListeError> {
+            match self.handle(Request::UpdateFilter {
+                id: uuid(&id)?,
+                name,
+                definition: definition.map(FilterCriteria::into_ipc).transpose()?,
+                after: after.as_deref().map(uuid).transpose()?,
+                before: before.as_deref().map(uuid).transpose()?,
+            })? {
+                Response::Filter(f) => Ok(f.into()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Delete a saved filter. Undo restores it.
+        pub fn delete_filter(&self, id: String) -> Result<(), ListeError> {
+            self.handle(Request::DeleteFilter { id: uuid(&id)? })?;
             Ok(())
         }
 

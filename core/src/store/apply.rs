@@ -59,7 +59,18 @@ fn table(entity: EntityType) -> &'static str {
         EntityType::List => "lists",
         EntityType::Task => "tasks",
         EntityType::Tag => "tags",
+        EntityType::Filter => "filters",
+        // Never reached: ops for unknown kinds are skipped before materializing.
+        EntityType::Unknown => "unknown_entities",
     }
+}
+
+/// Whether this build can materialize the op: a version it supports, a
+/// mutation kind and an entity kind it knows.
+fn applicable(op: &Op, supported_schema: u32) -> bool {
+    op.schema_version <= supported_schema
+        && !matches!(op.mutation, Mutation::Unknown { .. })
+        && op.entity_type != EntityType::Unknown
 }
 
 /// Log the op and materialize it. `seq` is the server's number if known.
@@ -99,7 +110,7 @@ pub(super) fn apply_op(
             inverse: None,
         });
     }
-    if op.schema_version > supported_schema || matches!(op.mutation, Mutation::Unknown { .. }) {
+    if !applicable(op, supported_schema) {
         return Ok(Outcome {
             status: Applied::Skipped,
             inverse: None,
@@ -132,7 +143,7 @@ pub(super) fn reapply_skipped(
     let mut count = 0;
     for payload in payloads {
         let op = Op::decode(&payload)?;
-        if op.schema_version > supported_schema || matches!(op.mutation, Mutation::Unknown { .. }) {
+        if !applicable(&op, supported_schema) {
             continue;
         }
         materialize(tx, &op)?;
@@ -169,6 +180,10 @@ fn ensure_row(tx: &Transaction, op: &Op) -> Result<bool> {
         EntityType::Tag => tx
             .prepare_cached("INSERT OR IGNORE INTO tags (id, space_id) VALUES (?1, ?2)")?
             .execute(params![op.entity_id, op.space_id])?,
+        EntityType::Filter => tx
+            .prepare_cached("INSERT OR IGNORE INTO filters (id, space_id) VALUES (?1, ?2)")?
+            .execute(params![op.entity_id, op.space_id])?,
+        EntityType::Unknown => 0,
     };
     Ok(changed > 0)
 }

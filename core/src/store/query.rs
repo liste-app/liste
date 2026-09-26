@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Result;
 use crate::ids::Id;
-use crate::model::{List, Priority, Space, Tag, Task};
+use crate::model::{Filter, List, Priority, Space, Tag, Task};
 
 use crate::op::Op;
 
@@ -72,6 +72,9 @@ pub struct SpaceState {
     pub lists: Vec<List>,
     pub tags: Vec<Tag>,
     pub tasks: Vec<Task>,
+    /// Absent in snapshots written before saved filters existed.
+    #[serde(default)]
+    pub filters: Vec<Filter>,
 }
 
 const TASK_COLUMNS: &str = "id, space_id, list_id, parent_id, title, notes, due_at, due_all_day,
@@ -234,6 +237,47 @@ pub(super) fn tags(conn: &Connection, space_id: Id) -> Result<Vec<Tag>> {
              ORDER BY name, id"
         ))?
         .query_map(params![space_id], tag_from_row)?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+const FILTER_COLUMNS: &str = "id, space_id, name, position, list_id, tag_id, filter_priority,
+    filter_status, due_from_day, due_to_day, include_completed, created_at, modified_at, deleted_at";
+
+fn filter_from_row(r: &Row<'_>) -> rusqlite::Result<Filter> {
+    Ok(Filter {
+        id: r.get(0)?,
+        space_id: r.get(1)?,
+        name: r.get(2)?,
+        position: r.get(3)?,
+        list_id: r.get(4)?,
+        tag_id: r.get(5)?,
+        priority: r.get::<_, Option<i64>>(6)?.map(Priority::from_i64),
+        status: r.get(7)?,
+        due_from_day: r.get(8)?,
+        due_to_day: r.get(9)?,
+        include_completed: r.get::<_, i64>(10)? != 0,
+        created_at: r.get(11)?,
+        modified_at: r.get(12)?,
+        deleted_at: r.get(13)?,
+    })
+}
+
+pub(super) fn filter(conn: &Connection, id: Id) -> Result<Option<Filter>> {
+    Ok(conn
+        .prepare_cached(&format!(
+            "SELECT {FILTER_COLUMNS} FROM filters WHERE id = ?1"
+        ))?
+        .query_row(params![id], filter_from_row)
+        .optional()?)
+}
+
+pub(super) fn filters(conn: &Connection, space_id: Id) -> Result<Vec<Filter>> {
+    Ok(conn
+        .prepare_cached(&format!(
+            "SELECT {FILTER_COLUMNS} FROM filters WHERE space_id = ?1 AND deleted_at IS NULL
+             ORDER BY position, id"
+        ))?
+        .query_map(params![space_id], filter_from_row)?
         .collect::<rusqlite::Result<_>>()?)
 }
 
@@ -502,11 +546,18 @@ pub(super) fn space_state(conn: &Connection, space_id: Id) -> Result<SpaceState>
     let args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(space_id)];
     let mut refs: Vec<&mut Task> = tasks.iter_mut().collect();
     fill_tags_where(conn, &mut refs, "tasks.space_id = ?1", &args)?;
+    let filters = conn
+        .prepare_cached(&format!(
+            "SELECT {FILTER_COLUMNS} FROM filters WHERE space_id = ?1 ORDER BY id"
+        ))?
+        .query_map(params![space_id], filter_from_row)?
+        .collect::<rusqlite::Result<_>>()?;
     Ok(SpaceState {
         space: space(conn, space_id)?,
         lists,
         tags,
         tasks,
+        filters,
     })
 }
 

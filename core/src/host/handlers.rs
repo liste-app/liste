@@ -3,14 +3,14 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use liste_ipc::protocol::{
-    DebugRequest, IpcError, ListView, OpView, PreviewView, Request, Response, SpanView, StatusView,
-    TagView, TaskPatch, TaskQuery, TaskView,
+    DebugRequest, FilterDefinition, FilterView, IpcError, ListView, OpView, PreviewView, Request,
+    Response, SpanView, StatusView, TagView, TaskPatch, TaskQuery, TaskView,
 };
 use uuid::Uuid;
 
 use super::{HOST_VERSION, Inner, sync_once};
 use crate::ids::Id;
-use crate::model::{EntityType, Field, List, Priority, Task, Value};
+use crate::model::{EntityType, Field, Filter, List, Priority, Task, Value};
 use crate::op::Mutation;
 use crate::parse::{Context, parse};
 use crate::store::{Store, StoreError, TaskFilter, TaskOrder, TaskRow, fixture};
@@ -518,6 +518,136 @@ fn dispatch(inner: &Inner, request: Request) -> Result<Response, IpcError> {
             store.commit(&ops).map_err(error)?;
             Response::Done { changed: true }
         }
+        Request::Filters => Response::Filters(
+            store
+                .filters(space)
+                .map_err(error)?
+                .iter()
+                .map(filter_view)
+                .collect(),
+        ),
+        Request::CreateFilter { name, definition } => {
+            let name = name.trim().to_owned();
+            if name.is_empty() {
+                return Err(IpcError::Invalid {
+                    message: "a filter needs a name".into(),
+                });
+            }
+            let filters = store.filters(space).map_err(error)?;
+            let last = filters.last().map(|f| f.position.clone());
+            let position = crate::fractional::between(last.as_deref(), None)
+                .unwrap_or_else(|| crate::fractional::FIRST.to_owned());
+            let filter_id = Id::new();
+            let now_ms = Timestamp::now().as_millisecond();
+            let mut ops = vec![
+                filter_set(
+                    store,
+                    space,
+                    filter_id,
+                    Field::Name,
+                    Value::from(name.as_str()),
+                ),
+                filter_set(
+                    store,
+                    space,
+                    filter_id,
+                    Field::Position,
+                    Value::from(position),
+                ),
+                filter_set(
+                    store,
+                    space,
+                    filter_id,
+                    Field::CreatedAt,
+                    Value::Int(now_ms),
+                ),
+            ];
+            ops.extend(definition_ops(store, space, filter_id, &definition)?);
+            store.commit(&ops).map_err(error)?;
+            let filter = store
+                .filter(filter_id)
+                .map_err(error)?
+                .ok_or(IpcError::NotFound {
+                    id: uuid(filter_id),
+                })?;
+            Response::Filter(filter_view(&filter))
+        }
+        Request::UpdateFilter {
+            id: filter_id,
+            name,
+            definition,
+            after,
+            before,
+        } => {
+            let filter = store
+                .filter(id(filter_id))
+                .map_err(error)?
+                .ok_or(IpcError::NotFound { id: filter_id })?;
+            let mut ops = Vec::new();
+            if let Some(name) = name {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err(IpcError::Invalid {
+                        message: "a filter needs a name".into(),
+                    });
+                }
+                ops.push(filter_set(
+                    store,
+                    space,
+                    filter.id,
+                    Field::Name,
+                    Value::from(name),
+                ));
+            }
+            if let Some(definition) = &definition {
+                ops.extend(definition_ops(store, space, filter.id, definition)?);
+            }
+            if after.is_some() || before.is_some() {
+                let filters = store.filters(space).map_err(error)?;
+                let pos = |target: Option<Uuid>| -> Result<Option<String>, IpcError> {
+                    match target {
+                        None => Ok(None),
+                        Some(t) => filters
+                            .iter()
+                            .find(|f| f.id == id(t))
+                            .map(|f| Some(f.position.clone()))
+                            .ok_or(IpcError::NotFound { id: t }),
+                    }
+                };
+                let lo = pos(after)?;
+                let hi = pos(before)?;
+                let key =
+                    crate::fractional::between(lo.as_deref(), hi.as_deref()).ok_or_else(|| {
+                        IpcError::Invalid {
+                            message: "no position between those filters".into(),
+                        }
+                    })?;
+                ops.push(filter_set(
+                    store,
+                    space,
+                    filter.id,
+                    Field::Position,
+                    Value::from(key),
+                ));
+            }
+            if !ops.is_empty() {
+                store.commit(&ops).map_err(error)?;
+            }
+            let filter = store
+                .filter(id(filter_id))
+                .map_err(error)?
+                .ok_or(IpcError::NotFound { id: filter_id })?;
+            Response::Filter(filter_view(&filter))
+        }
+        Request::DeleteFilter { id: filter_id } => {
+            store
+                .filter(id(filter_id))
+                .map_err(error)?
+                .ok_or(IpcError::NotFound { id: filter_id })?;
+            let op = store.op(space, EntityType::Filter, id(filter_id), Mutation::Delete);
+            store.commit(std::slice::from_ref(&op)).map_err(error)?;
+            Response::Done { changed: true }
+        }
         Request::GetTask { id: task_id } => {
             let task = store
                 .task(id(task_id))
@@ -802,9 +932,12 @@ fn debug(inner: &Inner, store: &mut Store, request: DebugRequest) -> Result<Resp
                 "task" => serde_json::to_value(store.task(id(row_id)).map_err(error)?),
                 "list" => serde_json::to_value(store.list(id(row_id)).map_err(error)?),
                 "tag" => serde_json::to_value(store.tag(id(row_id)).map_err(error)?),
+                "filter" => serde_json::to_value(store.filter(id(row_id)).map_err(error)?),
                 other => {
                     return Err(IpcError::Invalid {
-                        message: format!("unknown entity {other:?}; use task, list, or tag"),
+                        message: format!(
+                            "unknown entity {other:?}; use task, list, tag, or filter"
+                        ),
                     });
                 }
             }
@@ -842,7 +975,142 @@ fn debug(inner: &Inner, store: &mut Store, request: DebugRequest) -> Result<Resp
     })
 }
 
-fn query_filter(inner: &Inner, _store: &Store, q: &TaskQuery) -> Result<TaskFilter, IpcError> {
+fn filter_view(f: &Filter) -> FilterView {
+    FilterView {
+        id: uuid(f.id),
+        name: f.name.clone(),
+        definition: FilterDefinition {
+            list_id: f.list_id.map(uuid),
+            tag_id: f.tag_id.map(uuid),
+            priority: f.priority.map(|p| priority_name(p).to_owned()),
+            status: f.status.clone(),
+            due_from_day: f.due_from_day,
+            due_to_day: f.due_to_day,
+            include_completed: f.include_completed,
+        },
+    }
+}
+
+fn filter_set(
+    store: &mut Store,
+    space: Id,
+    filter: Id,
+    field: Field,
+    value: Value,
+) -> crate::op::Op {
+    store.op(
+        space,
+        EntityType::Filter,
+        filter,
+        Mutation::Set { field, value },
+    )
+}
+
+/// One op per criterion, so a definition is replaced whole.
+fn definition_ops(
+    store: &mut Store,
+    space: Id,
+    filter: Id,
+    d: &FilterDefinition,
+) -> Result<Vec<crate::op::Op>, IpcError> {
+    let priority = match &d.priority {
+        Some(p) => Some(parse_priority(p).ok_or_else(|| IpcError::Invalid {
+            message: format!("unknown priority {p:?}"),
+        })?),
+        None => None,
+    };
+    let status = d
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    Ok(vec![
+        filter_set(
+            store,
+            space,
+            filter,
+            Field::ListId,
+            Value::from(d.list_id.map(id)),
+        ),
+        filter_set(
+            store,
+            space,
+            filter,
+            Field::TagId,
+            Value::from(d.tag_id.map(id)),
+        ),
+        filter_set(
+            store,
+            space,
+            filter,
+            Field::FilterPriority,
+            Value::from(priority.map(|p| p as i64)),
+        ),
+        filter_set(
+            store,
+            space,
+            filter,
+            Field::FilterStatus,
+            Value::from(status),
+        ),
+        filter_set(
+            store,
+            space,
+            filter,
+            Field::DueFromDay,
+            Value::from(d.due_from_day),
+        ),
+        filter_set(
+            store,
+            space,
+            filter,
+            Field::DueToDay,
+            Value::from(d.due_to_day),
+        ),
+        filter_set(
+            store,
+            space,
+            filter,
+            Field::IncludeCompleted,
+            Value::Bool(d.include_completed),
+        ),
+    ])
+}
+
+fn query_filter(inner: &Inner, store: &Store, q: &TaskQuery) -> Result<TaskFilter, IpcError> {
+    let q = match q.filter_id {
+        None => q.clone(),
+        Some(filter_id) => {
+            // The saved criteria come first; the request's own fields
+            // narrow them. A filter with a due window lists by due date.
+            let f = store
+                .filter(id(filter_id))
+                .map_err(error)?
+                .filter(|f| f.deleted_at.is_none())
+                .ok_or(IpcError::NotFound { id: filter_id })?;
+            let has_window = f.due_from_day.is_some() || f.due_to_day.is_some();
+            TaskQuery {
+                filter_id: None,
+                list_id: q.list_id.or(f.list_id.map(uuid)),
+                tag_id: q.tag_id.or(f.tag_id.map(uuid)),
+                priority: q
+                    .priority
+                    .clone()
+                    .or(f.priority.map(|p| priority_name(p).to_owned())),
+                status: q.status.clone().or(f.status.clone()),
+                due_from_day: q.due_from_day.or(f.due_from_day),
+                due_to_day: q.due_to_day.or(f.due_to_day),
+                include_completed: q.include_completed || f.include_completed,
+                order: q
+                    .order
+                    .clone()
+                    .or_else(|| has_window.then(|| "due".to_owned())),
+                ..q.clone()
+            }
+        }
+    };
+    let q = &q;
     let priority = match &q.priority {
         Some(p) => Some(parse_priority(p).ok_or_else(|| IpcError::Invalid {
             message: format!("unknown priority {p:?}"),

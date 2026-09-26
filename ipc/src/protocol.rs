@@ -103,6 +103,28 @@ pub enum Request {
     DeleteList {
         id: Uuid,
     },
+    /// Saved filters (Section 5), in manual order.
+    Filters,
+    CreateFilter {
+        name: String,
+        #[serde(default)]
+        definition: FilterDefinition,
+    },
+    /// Rename, redefine, or move a saved filter; absent parts are kept.
+    UpdateFilter {
+        id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        definition: Option<FilterDefinition>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<Uuid>,
+    },
+    DeleteFilter {
+        id: Uuid,
+    },
     GetTask {
         id: Uuid,
     },
@@ -122,9 +144,42 @@ pub enum Request {
     Debug(DebugRequest),
 }
 
+/// What a saved filter selects. Absent fields do not filter.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct FilterDefinition {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag_id: Option<Uuid>,
+    /// `high`, `medium`, `low`, or `none`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Due in `[today + due_from_day, today + due_to_day)`, whole days.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_from_day: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_to_day: Option<i64>,
+    #[serde(default)]
+    pub include_completed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FilterView {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(flatten)]
+    pub definition: FilterDefinition,
+}
+
 /// A filter over tasks. Absent fields do not filter.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TaskQuery {
+    /// A saved filter's criteria, evaluated by the host; the fields below
+    /// narrow it further, and the window applies as usual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list_id: Option<Uuid>,
     /// Only tasks with no list.
@@ -207,7 +262,7 @@ pub struct TaskPatch {
 pub enum DebugRequest {
     /// The most recent ops in the log.
     OpLog { limit: usize },
-    /// One materialized row: `entity` is `task`, `list`, or `tag`.
+    /// One materialized row: `entity` is `task`, `list`, `tag`, or `filter`.
     Row { entity: String, id: Uuid },
     /// The sync cursor and pending count.
     Cursor,
@@ -242,6 +297,8 @@ pub enum Response {
     Lists(Vec<ListView>),
     List(ListView),
     Tags(Vec<TagView>),
+    Filters(Vec<FilterView>),
+    Filter(FilterView),
     Done {
         changed: bool,
     },
@@ -458,6 +515,14 @@ mod tests {
             Response::Tasks(vec![]),
             Response::Count { total: 3 },
             Response::Statuses(vec!["open".into()]),
+            Response::Filters(vec![FilterView {
+                id: Uuid::nil(),
+                name: "Soon".into(),
+                definition: FilterDefinition {
+                    due_to_day: Some(7),
+                    ..Default::default()
+                },
+            }]),
             Response::Lists(vec![]),
             Response::OpLog(vec![]),
             Response::Row(serde_json::Value::Null),

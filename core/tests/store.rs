@@ -559,3 +559,100 @@ fn a_subtask_whose_parent_arrives_later_attaches_when_it_does() {
         2
     );
 }
+
+#[test]
+fn every_filter_field_round_trips_and_undo_removes_a_new_filter() {
+    let mut store = Store::open_in_memory(Id::new()).unwrap();
+    let space = Id::new();
+    let list = Id::new();
+    let tag = Id::new();
+    let filter = Id::new();
+    let ops = vec![
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::Name, "Errands soon"),
+        ),
+        store.op(space, EntityType::Filter, filter, set(Field::Position, "A")),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::ListId, Value::Id(list)),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::TagId, Value::Id(tag)),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::FilterPriority, 2i64),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::FilterStatus, "doing"),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::DueFromDay, -1i64),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::DueToDay, 3i64),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::IncludeCompleted, true),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::CreatedAt, 9i64),
+        ),
+    ];
+    store.commit(&ops).unwrap();
+    let f = store.filter(filter).unwrap().unwrap();
+    assert_eq!(f.name, "Errands soon");
+    assert_eq!(f.position, "A");
+    assert_eq!(f.list_id, Some(list));
+    assert_eq!(f.tag_id, Some(tag));
+    assert_eq!(f.priority, Some(Priority::Medium));
+    assert_eq!(f.status.as_deref(), Some("doing"));
+    assert_eq!(f.due_from_day, Some(-1));
+    assert_eq!(f.due_to_day, Some(3));
+    assert!(f.include_completed);
+    assert_eq!(f.created_at, 9);
+    assert_eq!(store.filters(space).unwrap().len(), 1);
+    // A task field does not land on a filter and a filter field does not
+    // land on a task: both are logged and ignored.
+    let stray = store.op(space, EntityType::Filter, filter, set(Field::Title, "no"));
+    let stray2 = store.op(
+        space,
+        EntityType::Task,
+        Id::new(),
+        set(Field::TagId, Value::Id(tag)),
+    );
+    store.commit(&[stray, stray2]).unwrap();
+    assert_eq!(store.filter(filter).unwrap().unwrap().name, "Errands soon");
+    // Undo of the stray commit removes the empty task it created; undo of
+    // the creating commit removes the filter itself.
+    assert!(store.undo().unwrap());
+    assert!(store.undo().unwrap());
+    assert!(store.filters(space).unwrap().is_empty());
+    assert!(store.redo().unwrap());
+    assert_eq!(store.filters(space).unwrap()[0].name, "Errands soon");
+}
