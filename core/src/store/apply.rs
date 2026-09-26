@@ -268,8 +268,9 @@ fn materialize(tx: &Transaction, op: &Op) -> Result<Option<Inverse>> {
     bump_modified(tx, op)?;
     let is_task = op.entity_type == EntityType::Task;
     if created && is_task {
-        // Subtasks whose ops arrived before their parent's sit at the top
-        // level until now.
+        // The new row takes its place in the outline, and subtasks whose
+        // ops arrived before their parent's leave the top level.
+        refresh_outline(tx, op.entity_id)?;
         refresh_children_outline(tx, op.entity_id)?;
     }
     let result = match &op.mutation {
@@ -397,7 +398,8 @@ fn refresh_outline(tx: &Transaction, task: Id) -> Result<()> {
     else {
         return Ok(());
     };
-    let mut new_key = position.clone();
+    let own = format!("{position}.{}", hex(task));
+    let mut new_key = own.clone();
     let mut new_depth = 0;
     if let Some(parent) = parent
         && let Some((parent_key, parent_depth)) = tx
@@ -410,7 +412,7 @@ fn refresh_outline(tx: &Transaction, task: Id) -> Result<()> {
         && parent_key != old_key
         && !parent_key.starts_with(&format!("{old_key}/"))
     {
-        new_key = format!("{parent_key}/{position}");
+        new_key = format!("{parent_key}/{own}");
         new_depth = parent_depth + 1;
     }
     if new_key == old_key && new_depth == old_depth {
@@ -435,6 +437,12 @@ fn refresh_outline(tx: &Transaction, task: Id) -> Result<()> {
     Ok(())
 }
 
+/// The id as SQLite's `hex()` renders it, so keys built here and in SQL
+/// agree.
+fn hex(id: Id) -> String {
+    id.as_bytes().iter().map(|b| format!("{b:02X}")).collect()
+}
+
 /// Attach the children of a task whose row has just appeared.
 fn refresh_children_outline(tx: &Transaction, parent: Id) -> Result<()> {
     let children: Vec<Id> = tx
@@ -456,11 +464,11 @@ pub(super) fn rebuild_outline(tx: &Transaction, space_id: Id) -> Result<()> {
     tx.prepare_cached(
         "INSERT INTO outline (id, key, depth)
          WITH RECURSIVE walk(id, key, depth) AS (
-             SELECT id, position, 0 FROM tasks
+             SELECT id, position || '.' || hex(id), 0 FROM tasks
               WHERE space_id = ?1
                 AND (parent_id IS NULL OR parent_id NOT IN (SELECT id FROM tasks WHERE space_id = ?1))
              UNION ALL
-             SELECT t.id, w.key || '/' || t.position, w.depth + 1
+             SELECT t.id, w.key || '/' || t.position || '.' || hex(t.id), w.depth + 1
                FROM tasks t JOIN walk w ON t.parent_id = w.id
               WHERE t.space_id = ?1 AND w.depth < 64
          )
@@ -469,7 +477,7 @@ pub(super) fn rebuild_outline(tx: &Transaction, space_id: Id) -> Result<()> {
     .execute(params![space_id])?;
     tx.prepare_cached(
         "UPDATE tasks SET
-            sort_key = coalesce((SELECT key FROM outline WHERE outline.id = tasks.id), position),
+            sort_key = coalesce((SELECT key FROM outline WHERE outline.id = tasks.id), position || '.' || hex(id)),
             depth = coalesce((SELECT depth FROM outline WHERE outline.id = tasks.id), 0)
          WHERE space_id = ?1",
     )?

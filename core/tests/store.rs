@@ -564,6 +564,28 @@ fn a_subtask_whose_parent_arrives_later_attaches_when_it_does() {
         .map(|r| (r.task.title.as_str(), r.depth))
         .collect();
     assert_eq!(titles, vec![("parent", 0), ("child", 1)]);
+    // Tasks that never set a position (captured ones) share the default
+    // key and still form an outline, in creation order.
+    let (x, y, z) = (Id::new(), Id::new(), Id::new());
+    let ops = vec![
+        store.op(space, EntityType::Task, x, set(Field::Title, "x")),
+        store.op(space, EntityType::Task, y, set(Field::Title, "y")),
+        store.op(space, EntityType::Task, z, set(Field::Title, "z")),
+        store.op(
+            space,
+            EntityType::Task,
+            y,
+            set(Field::ParentId, Value::Id(x)),
+        ),
+    ];
+    store.commit(&ops).unwrap();
+    let rows = store.task_rows(space, &TaskFilter::default()).unwrap();
+    let titles: Vec<(&str, u32)> = rows
+        .iter()
+        .map(|r| (r.task.title.as_str(), r.depth))
+        .collect();
+    let at = titles.iter().position(|t| t.0 == "x").unwrap();
+    assert_eq!(&titles[at..at + 3], &[("x", 0), ("y", 1), ("z", 0)]);
     // A parent cycle from concurrent edits leaves every row in place.
     let cycle = store.op(
         space,
@@ -572,13 +594,13 @@ fn a_subtask_whose_parent_arrives_later_attaches_when_it_does() {
         set(Field::ParentId, Value::Id(child)),
     );
     store.commit(std::slice::from_ref(&cycle)).unwrap();
-    assert_eq!(store.count(space, &TaskFilter::default()).unwrap(), 2);
+    assert_eq!(store.count(space, &TaskFilter::default()).unwrap(), 5);
     assert_eq!(
         store
             .task_rows(space, &TaskFilter::default())
             .unwrap()
             .len(),
-        2
+        5
     );
 }
 

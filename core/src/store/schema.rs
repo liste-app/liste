@@ -140,11 +140,15 @@ pub const MIGRATIONS: &[&str] = &[
         INSERT INTO tasks_fts (rowid, title, notes) VALUES (new.rid, new.title, new.notes);
     END;
     "#,
-    // 2: outline order. `sort_key` is a task's materialized path (each
-    // ancestor's position key, then its own, separated by `/`) so a window
-    // of a manual-order list comes straight off an index with subtasks
-    // under their parents; `depth` is the number of ancestors. Both are
-    // derived from `position` and `parent_id` and maintained by apply.
+    // 2: outline order. `sort_key` is a task's materialized path: each
+    // ancestor's position key and id, then its own, separated by `/`, so a
+    // window of a manual-order list comes straight off an index with
+    // subtasks under their parents; `depth` is the number of ancestors.
+    // The id keeps keys unique when siblings share a position (every
+    // captured task starts at the same key), and `.` sorts before `/`, so
+    // a subtree is exactly the range between the key plus `/` and the key
+    // plus `0`. Both columns are derived from `position` and `parent_id`
+    // and maintained by apply.
     // The partial indexes cover the open-task windows and counts (manual
     // order, one list, a due range), each ending in `id` so a window's
     // order comes off the index with no sort. The narrow status index is
@@ -164,17 +168,17 @@ pub const MIGRATIONS: &[&str] = &[
         WHERE completed_at IS NULL AND deleted_at IS NULL;
     CREATE TEMP TABLE outline AS
         WITH RECURSIVE walk(id, key, depth) AS (
-            SELECT id, position, 0 FROM tasks
+            SELECT id, position || '.' || hex(id), 0 FROM tasks
              WHERE parent_id IS NULL OR parent_id NOT IN (SELECT id FROM tasks)
             UNION ALL
-            SELECT t.id, w.key || '/' || t.position, w.depth + 1
+            SELECT t.id, w.key || '/' || t.position || '.' || hex(t.id), w.depth + 1
               FROM tasks t JOIN walk w ON t.parent_id = w.id
              WHERE w.depth < 64
         )
         SELECT id, key, depth FROM walk;
     CREATE INDEX temp.outline_id ON outline (id);
     UPDATE tasks SET
-        sort_key = coalesce((SELECT key FROM outline WHERE outline.id = tasks.id), position),
+        sort_key = coalesce((SELECT key FROM outline WHERE outline.id = tasks.id), position || '.' || hex(id)),
         depth = coalesce((SELECT depth FROM outline WHERE outline.id = tasks.id), 0);
     DROP TABLE outline;
     "#,
