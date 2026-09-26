@@ -1,0 +1,60 @@
+# Rust workspace: core, ipc, bindings, server, cli, mcp.
+# The core suite in core/tests/ runs on every change to the core, the IPC
+# crate, or the bindings (Section 15 and Section 16 of docs/ARCHITECTURE.md).
+
+name: Rust
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "core/**"
+      - "ipc/**"
+      - "bindings/**"
+      - "server/**"
+      - "cli/**"
+      - "mcp/**"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "core/**"
+      - "ipc/**"
+      - "bindings/**"
+      - "server/**"
+      - "cli/**"
+      - "mcp/**"
+      - ".github/workflows/rust.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: Format and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --all-targets
+      - run: cargo test --workspace --no-fail-fast

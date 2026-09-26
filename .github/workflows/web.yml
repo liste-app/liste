@@ -1,0 +1,40 @@
+# Web app (Phase 1). Runs when the web app, the core, the IPC crate, or the
+# bindings change. Builds nothing yet: the SvelteKit project has not been
+# created.
+
+name: Web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "core/**"
+      - "ipc/**"
+      - "bindings/**"
+      - ".github/workflows/web.yml"
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "core/**"
+      - "ipc/**"
+      - "bindings/**"
+      - ".github/workflows/web.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (placeholder)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Check the core for wasm32
+        run: cargo check -p liste-core --target wasm32-unknown-unknown
+      - name: SvelteKit project
+        run: echo "apps/web has no SvelteKit project yet; nothing to build."

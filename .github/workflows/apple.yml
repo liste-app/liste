@@ -1,0 +1,38 @@
+# iOS and macOS apps (Phase 1). Runs when the Apple app, the core, the IPC
+# crate, or the bindings change. Builds nothing yet: the Xcode project has
+# not been created.
+
+name: Apple
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/apple/**"
+      - "core/**"
+      - "ipc/**"
+      - "bindings/**"
+      - ".github/workflows/apple.yml"
+  pull_request:
+    paths:
+      - "apps/apple/**"
+      - "core/**"
+      - "ipc/**"
+      - "bindings/**"
+      - ".github/workflows/apple.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (placeholder)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the core and bindings for macOS
+        run: cargo build -p liste-bindings --release
+      - name: Xcode project
+        run: echo "apps/apple has no Xcode project yet; nothing to build."

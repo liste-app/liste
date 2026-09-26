@@ -1,0 +1,35 @@
+# Release pipeline (Section 19). A version tag on main produces every
+# artifact for every channel from the same commit. No hand-built artifacts.
+#
+# Only the Rust artifacts are wired up. The remaining channels (macOS direct
+# and App Store, iOS, web to Cloudflare, server image to GHCR and Cloudflare
+# Containers) are added as each client exists. Signing material and deploy
+# credentials come from GitHub Actions encrypted secrets; nothing here is
+# committed.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Build Rust artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-${{ github.ref_name }}
+          path: |
+            target/release/liste
+            target/release/liste-mcp
+            target/release/liste-server
