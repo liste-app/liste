@@ -59,7 +59,6 @@ CI is path-filtered: each app's pipeline runs only when its folder, the core, th
 
 - Rust: `rustfmt` defaults and `clippy` with no warnings.
 - Each platform app follows that platform's conventions and formatter.
-- Commit messages describe the change, not the tooling used to make it.
 
 ## Code of conduct
 
