@@ -40,3 +40,11 @@ sqlite-wasm-vfs = "0.2"
 getrandom = { version = "0.4", features = ["wasm_js"] }
 # uuid needs an explicit randomness and clock source on this target too.
 uuid = { workspace = true, features = ["js"] }
+
+[[bench]]
+name = "insert"
+harness = false
+
+[[bench]]
+name = "search"
+harness = false
