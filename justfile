@@ -23,6 +23,10 @@ test:
 test-core:
     cargo test -p liste-core --no-fail-fast
 
+# Run the core suite cases that are specified but not yet implemented.
+test-pending:
+    cargo test -p liste-core --no-fail-fast -- --ignored
+
 # Format check and clippy with warnings denied.
 lint:
     cargo fmt --all --check

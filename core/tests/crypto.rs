@@ -6,6 +6,7 @@ use common::pending;
 const SUITE: &str = "crypto";
 
 #[test]
+#[ignore = "not implemented"]
 fn ciphertext_and_metadata_contain_no_title_note_or_tag_substrings() {
     pending(
         SUITE,
@@ -14,6 +15,7 @@ fn ciphertext_and_metadata_contain_no_title_note_or_tag_substrings() {
 }
 
 #[test]
+#[ignore = "not implemented"]
 fn associated_data_is_space_id_op_id_and_schema_version() {
     pending(
         SUITE,
@@ -22,11 +24,13 @@ fn associated_data_is_space_id_op_id_and_schema_version() {
 }
 
 #[test]
+#[ignore = "not implemented"]
 fn a_session_token_cannot_decrypt() {
     pending(SUITE, "a_session_token_cannot_decrypt");
 }
 
 #[test]
+#[ignore = "not implemented"]
 fn space_key_round_trips_through_wrap_and_unwrap() {
     pending(SUITE, "space_key_round_trips_through_wrap_and_unwrap");
 }
