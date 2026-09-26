@@ -5,6 +5,8 @@
 
 use std::collections::BTreeMap;
 
+use zeroize::Zeroize;
+
 use super::envelope::{self, EncryptedOp, EncryptedSnapshot};
 use super::keys::{RecoveryKey, RootKey, SpaceKey, UserKeyPair, UserPublicKeys};
 use super::keystore::KeyStore;
@@ -118,11 +120,12 @@ impl Keyring {
             .store
             .get(ROOT_NAME)?
             .ok_or(CryptoError::NotInitialized)?;
-        let arr: [u8; 32] = root_bytes
+        let mut arr: [u8; 32] = root_bytes
             .as_slice()
             .try_into()
             .map_err(|_| CryptoError::Corrupt)?;
         let root = RootKey::from_bytes(arr);
+        arr.zeroize();
         let wrapped: Wrapped = self
             .store
             .get(USER_KEYS_NAME)?

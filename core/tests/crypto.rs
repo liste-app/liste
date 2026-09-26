@@ -234,7 +234,7 @@ fn recovery_key_round_trip_including_a_mistyped_character() {
     assert_eq!(text.len(), 69);
 
     // A mistyped character is caught before any key is tried.
-    let mut wrong = text.clone().into_bytes();
+    let mut wrong = text.as_bytes().to_vec();
     let pos = 7;
     wrong[pos] = if wrong[pos] == b'A' { b'B' } else { b'A' };
     let wrong = String::from_utf8(wrong).unwrap();
@@ -368,4 +368,23 @@ fn keyring_states_and_errors_carry_no_secrets() {
         format!("no key for space {}", encrypted.space_id)
     );
     assert_eq!(CryptoError::Decrypt.to_string(), "decryption failed");
+}
+
+/// Decrypted buffers and the rendered recovery key are zeroized on drop,
+/// which the types enforce.
+#[test]
+fn plaintext_buffers_and_the_recovery_string_are_zeroizing() {
+    fn assert_zeroizing<T: zeroize::Zeroize>(_: &zeroize::Zeroizing<T>) {}
+    let (mut k, recovery, _) = keyring();
+    let rendered = recovery.render();
+    assert_zeroizing(&rendered);
+    let space = Id::new();
+    k.create_space(space).unwrap();
+    let key = SpaceKey::from_bytes([9u8; 32]);
+    let sealed = crypto::primitives::aead_seal(&[1u8; 32], b"aad", b"plain").unwrap();
+    let opened = crypto::primitives::aead_open(&[1u8; 32], b"aad", &sealed).unwrap();
+    assert_zeroizing(&opened);
+    assert_zeroizing(&crypto::primitives::derive_key(&[2u8; 32], b"info"));
+    assert_zeroizing(&crypto::primitives::random_key().unwrap());
+    let _ = key;
 }

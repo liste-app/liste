@@ -42,8 +42,8 @@ fn checksum(key: &[u8; 32]) -> [u8; CHECK_CHARS] {
     out
 }
 
-fn encode_data(key: &[u8; 32]) -> [u8; DATA_CHARS] {
-    let mut out = [0u8; DATA_CHARS];
+fn encode_data(key: &[u8; 32]) -> Zeroizing<[u8; DATA_CHARS]> {
+    let mut out = Zeroizing::new([0u8; DATA_CHARS]);
     let mut acc: u32 = 0;
     let mut bits = 0u32;
     let mut i = 0;
@@ -61,15 +61,19 @@ fn encode_data(key: &[u8; 32]) -> [u8; DATA_CHARS] {
     out
 }
 
-/// Render the key for display or printing.
-pub fn render(key: &RecoveryKey) -> String {
+/// Render the key for display or printing. The string is zeroized when
+/// dropped; callers should not copy it into an ordinary `String`.
+pub fn render(key: &RecoveryKey) -> Zeroizing<String> {
     let data = encode_data(key.as_bytes());
     let check = checksum(key.as_bytes());
-    let all: Vec<u8> = data.iter().chain(check.iter()).copied().collect();
-    all.chunks(GROUP)
-        .map(|g| std::str::from_utf8(g).expect("ascii"))
-        .collect::<Vec<_>>()
-        .join("-")
+    let mut out = Zeroizing::new(String::with_capacity(DATA_CHARS + CHECK_CHARS + 13));
+    for (i, c) in data.iter().chain(check.iter()).enumerate() {
+        if i > 0 && i % GROUP == 0 {
+            out.push('-');
+        }
+        out.push(char::from(*c));
+    }
+    out
 }
 
 fn digit(c: u8) -> Option<u8> {
@@ -115,10 +119,12 @@ pub fn parse(entered: &str) -> Result<RecoveryKey, RecoveryKeyError> {
         return Err(RecoveryKeyError::Checksum);
     }
     let expected = checksum(&key);
-    let entered_check: Vec<u8> = digits[DATA_CHARS..]
-        .iter()
-        .map(|d| ALPHABET[*d as usize])
-        .collect();
+    let entered_check: Zeroizing<Vec<u8>> = Zeroizing::new(
+        digits[DATA_CHARS..]
+            .iter()
+            .map(|d| ALPHABET[*d as usize])
+            .collect(),
+    );
     if !ct_eq(&expected, &entered_check) {
         return Err(RecoveryKeyError::Checksum);
     }
@@ -144,7 +150,7 @@ mod tests {
             assert!(text.split('-').all(|g| g.len() == 4));
             let back = parse(&text).unwrap();
             assert_eq!(back.as_bytes(), key.as_bytes());
-            let sloppy = text.to_lowercase().replace('-', " ");
+            let sloppy = Zeroizing::new(text.to_lowercase().replace('-', " "));
             assert_eq!(parse(&sloppy).unwrap().as_bytes(), key.as_bytes());
         }
     }
@@ -175,6 +181,7 @@ mod tests {
         let mut bad = text.clone();
         bad.replace_range(0..1, "U");
         assert_eq!(parse(&bad).unwrap_err(), RecoveryKeyError::Character(0));
+        let _: &Zeroizing<String> = &text;
     }
 
     #[test]

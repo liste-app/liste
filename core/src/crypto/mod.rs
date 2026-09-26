@@ -99,7 +99,8 @@ pub enum CryptoError {
 
 impl RecoveryKey {
     /// The key as fourteen groups of four characters for a person to save.
-    pub fn render(&self) -> String {
+    /// Zeroized when dropped.
+    pub fn render(&self) -> zeroize::Zeroizing<String> {
         recovery::render(self)
     }
 

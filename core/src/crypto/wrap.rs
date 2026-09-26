@@ -13,7 +13,7 @@
 //! as another.
 
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use super::CryptoError;
 use super::keys::{RecoveryKey, RootKey, SpaceKey, UserKeyPair, UserPublicKeys};
@@ -80,11 +80,13 @@ pub fn unwrap_root_with_recovery(
     wrapped: &Wrapped,
 ) -> Result<RootKey, CryptoError> {
     let bytes = unwrap(recovery.as_bytes(), RECOVERY_LABEL, wrapped)?;
-    let arr: [u8; 32] = bytes
+    let mut arr: [u8; 32] = bytes
         .as_slice()
         .try_into()
         .map_err(|_| CryptoError::Decrypt)?;
-    Ok(RootKey::from_bytes(arr))
+    let key = RootKey::from_bytes(arr);
+    arr.zeroize();
+    Ok(key)
 }
 
 /// A space key wrapped for one member. This is what `space_members.
@@ -163,11 +165,13 @@ pub fn unwrap_space_key(
     let key = sealed_box_key(&shared, &wrapped.recipient, &wrapped.ephemeral);
     let aad = sealed_box_aad(wrapped.space_id, &wrapped.recipient, &wrapped.ephemeral);
     let bytes = aead_open(&key, &aad, &wrapped.sealed)?;
-    let arr: [u8; 32] = bytes
+    let mut arr: [u8; 32] = bytes
         .as_slice()
         .try_into()
         .map_err(|_| CryptoError::Decrypt)?;
-    Ok(SpaceKey::from_bytes(arr))
+    let key = SpaceKey::from_bytes(arr);
+    arr.zeroize();
+    Ok(key)
 }
 
 #[cfg(test)]
