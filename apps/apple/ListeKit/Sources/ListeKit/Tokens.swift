@@ -32,14 +32,54 @@ public enum Tokens {
         public static let spanPriority = dynamic(light: (0.8510, 0.5098, 0.1686), dark: (0.9490, 0.6353, 0.3059))
         public static let spanRecurrence = dynamic(light: (0.7608, 0.2314, 0.5412), dark: (0.8980, 0.4235, 0.7020))
 
-        /// A color that follows the system appearance.
-        static func dynamic(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
-            #if canImport(AppKit)
-                return Color(nsColor: NSColor(name: nil) { appearance in
+        #if canImport(AppKit)
+            /// The same colors as AppKit colors, for views built without SwiftUI.
+            public enum NS {
+                public static let accent = NSColor.controlAccentColor
+                public static let background = nsDynamic(light: (1.0000, 1.0000, 1.0000), dark: (0.1176, 0.1176, 0.1255))
+                public static let backgroundSecondary = nsDynamic(light: (0.9608, 0.9608, 0.9686), dark: (0.1647, 0.1647, 0.1765))
+                public static let backgroundTertiary = nsDynamic(light: (0.9216, 0.9216, 0.9373), dark: (0.2078, 0.2078, 0.2196))
+                public static let text = nsDynamic(light: (0.1137, 0.1137, 0.1216), dark: (0.9490, 0.9490, 0.9569))
+                public static let textSecondary = nsDynamic(light: (0.4314, 0.4314, 0.4510), dark: (0.6314, 0.6314, 0.6510))
+                public static let textTertiary = nsDynamic(light: (0.6824, 0.6824, 0.6980), dark: (0.4314, 0.4314, 0.4510))
+                public static let separator = nsDynamic(light: (0.8863, 0.8863, 0.9020), dark: (0.2353, 0.2353, 0.2510))
+                public static let selection = nsDynamic(light: (0.8667, 0.9059, 0.9843), dark: (0.1843, 0.2471, 0.3725))
+                public static let overdue = nsDynamic(light: (0.7843, 0.2118, 0.1843), dark: (0.9412, 0.3961, 0.3569))
+                public static let success = nsDynamic(light: (0.1804, 0.5451, 0.3412), dark: (0.2980, 0.7333, 0.4784))
+                public static let priorityHigh = nsDynamic(light: (0.7843, 0.2118, 0.1843), dark: (0.9412, 0.3961, 0.3569))
+                public static let priorityMedium = nsDynamic(light: (0.8510, 0.5098, 0.1686), dark: (0.9490, 0.6353, 0.3059))
+                public static let priorityLow = nsDynamic(light: (0.2314, 0.4353, 0.8784), dark: (0.3569, 0.5529, 0.9373))
+                public static let spanDate = nsDynamic(light: (0.2314, 0.4353, 0.8784), dark: (0.3569, 0.5529, 0.9373))
+                public static let spanTime = nsDynamic(light: (0.0549, 0.5490, 0.6039), dark: (0.2471, 0.7216, 0.7765))
+                public static let spanList = nsDynamic(light: (0.4784, 0.3098, 0.8196), dark: (0.6392, 0.5098, 0.9333))
+                public static let spanTag = nsDynamic(light: (0.1804, 0.5451, 0.3412), dark: (0.2980, 0.7333, 0.4784))
+                public static let spanPriority = nsDynamic(light: (0.8510, 0.5098, 0.1686), dark: (0.9490, 0.6353, 0.3059))
+                public static let spanRecurrence = nsDynamic(light: (0.7608, 0.2314, 0.5412), dark: (0.8980, 0.4235, 0.7020))
+
+                /// The color for a priority name.
+                public static func priority(_ name: String) -> NSColor {
+                    switch name {
+                    case "high": priorityHigh
+                    case "medium": priorityMedium
+                    case "low": priorityLow
+                    default: textTertiary
+                    }
+                }
+            }
+
+            static func nsDynamic(light: (Double, Double, Double), dark: (Double, Double, Double)) -> NSColor {
+                NSColor(name: nil) { appearance in
                     let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                     let (r, g, b) = isDark ? dark : light
                     return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
-                })
+                }
+            }
+        #endif
+
+        /// A color that follows the system appearance.
+        static func dynamic(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
+            #if canImport(AppKit)
+                return Color(nsColor: nsDynamic(light: light, dark: dark))
             #else
                 return Color(uiColor: UIColor { traits in
                     let (r, g, b) = traits.userInterfaceStyle == .dark ? dark : light
@@ -82,6 +122,12 @@ public enum Tokens {
         public static let xxl: CGFloat = 32
     }
 
+    /// Fixed control sizes.
+    public enum Size {
+        public static let row: CGFloat = 40
+        public static let dayColumn: CGFloat = 88
+    }
+
     public enum Radius {
         public static let sm: CGFloat = 4
         public static let md: CGFloat = 6
@@ -99,6 +145,21 @@ public enum Tokens {
         public static let title = Font.system(.title3, weight: .semibold)
         public static let largeTitle = Font.system(.title, weight: .bold)
         public static let capture = Font.system(.title2, weight: .regular)
+
+        #if canImport(AppKit)
+            /// The same styles as AppKit fonts, for views built without SwiftUI.
+            @MainActor
+            public enum NS {
+                public static let caption = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular)
+                public static let footnote = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .footnote).pointSize, weight: .regular)
+                public static let body = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .body).pointSize, weight: .regular)
+                public static let bodyStrong = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .body).pointSize, weight: .semibold)
+                public static let callout = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .regular)
+                public static let title = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .title3).pointSize, weight: .semibold)
+                public static let largeTitle = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .title1).pointSize, weight: .bold)
+                public static let capture = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .title2).pointSize, weight: .regular)
+            }
+        #endif
     }
 
     /// Durations in seconds. `animation` returns nil under reduced motion.

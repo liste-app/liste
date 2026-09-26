@@ -41,14 +41,41 @@ def swift(tokens: dict) -> str:
         dr, dg, db = hex_rgb(c["dark"])
         out.append(f"        public static let {name} = dynamic(light: ({lr:.4f}, {lg:.4f}, {lb:.4f}), dark: ({dr:.4f}, {dg:.4f}, {db:.4f}))")
     out += ["",
-            "        /// A color that follows the system appearance.",
-            "        static func dynamic(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {",
-            "            #if canImport(AppKit)",
-            "                return Color(nsColor: NSColor(name: nil) { appearance in",
+            "        #if canImport(AppKit)",
+            "            /// The same colors as AppKit colors, for views built without SwiftUI.",
+            "            public enum NS {"]
+    for name, c in tokens["color"].items():
+        if c.get("system"):
+            out.append(f"                public static let {name} = NSColor.controlAccentColor")
+            continue
+        lr, lg, lb = hex_rgb(c["light"])
+        dr, dg, db = hex_rgb(c["dark"])
+        out.append(f"                public static let {name} = nsDynamic(light: ({lr:.4f}, {lg:.4f}, {lb:.4f}), dark: ({dr:.4f}, {dg:.4f}, {db:.4f}))")
+    out += ["",
+            "                /// The color for a priority name.",
+            "                public static func priority(_ name: String) -> NSColor {",
+            "                    switch name {",
+            "                    case \"high\": priorityHigh",
+            "                    case \"medium\": priorityMedium",
+            "                    case \"low\": priorityLow",
+            "                    default: textTertiary",
+            "                    }",
+            "                }",
+            "            }",
+            "",
+            "            static func nsDynamic(light: (Double, Double, Double), dark: (Double, Double, Double)) -> NSColor {",
+            "                NSColor(name: nil) { appearance in",
             "                    let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua",
             "                    let (r, g, b) = isDark ? dark : light",
             "                    return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)",
-            "                })",
+            "                }",
+            "            }",
+            "        #endif",
+            "",
+            "        /// A color that follows the system appearance.",
+            "        static func dynamic(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {",
+            "            #if canImport(AppKit)",
+            "                return Color(nsColor: nsDynamic(light: light, dark: dark))",
             "            #else",
             "                return Color(uiColor: UIColor { traits in",
             "                    let (r, g, b) = traits.userInterfaceStyle == .dark ? dark : light",
@@ -83,6 +110,11 @@ def swift(tokens: dict) -> str:
     out.append("    public enum Space {")
     for name, v in tokens["space"].items():
         out.append(f"        public static let {name}: CGFloat = {v}")
+    out += ["    }", "", "    /// Fixed control sizes.", "    public enum Size {"]
+    for name, v in tokens["size"].items():
+        if name.startswith("$"):
+            continue
+        out.append(f"        public static let {name}: CGFloat = {v}")
     out += ["    }", "", "    public enum Radius {"]
     for name, v in tokens["radius"].items():
         out.append(f"        public static let {name}: CGFloat = {v}")
@@ -92,6 +124,17 @@ def swift(tokens: dict) -> str:
         if name.startswith("$"):
             continue
         out.append(f"        public static let {name} = Font.system(.{t['style']}, weight: {weights[t['weight']]})")
+    out += ["",
+            "        #if canImport(AppKit)",
+            "            /// The same styles as AppKit fonts, for views built without SwiftUI.",
+            "            @MainActor",
+            "            public enum NS {"]
+    for name, t in tokens["type"].items():
+        if name.startswith("$"):
+            continue
+        ns_style = {"caption": "caption1", "title": "title1"}.get(t["style"], t["style"])
+        out.append(f"                public static let {name} = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .{ns_style}).pointSize, weight: {weights[t['weight']]})")
+    out += ["            }", "        #endif"]
     out += ["    }", "", "    /// Durations in seconds. `animation` returns nil under reduced motion.", "    public enum Motion {"]
     for name, v in tokens["motion"].items():
         if name.startswith("$"):
@@ -120,6 +163,10 @@ def css(tokens: dict) -> str:
         out.append(f"  --color-{kebab(name)}: {c['light']};")
     for name, v in tokens["space"].items():
         out.append(f"  --space-{name}: {v}px;")
+    for name, v in tokens["size"].items():
+        if name.startswith("$"):
+            continue
+        out.append(f"  --size-{kebab(name)}: {v}px;")
     for name, v in tokens["radius"].items():
         out.append(f"  --radius-{name}: {v}px;")
     for name, t in tokens["type"].items():
