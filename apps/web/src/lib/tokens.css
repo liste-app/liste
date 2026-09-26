@@ -1,0 +1,94 @@
+/* Generated from design/tokens.json by design/generate.py. Do not edit; change the tokens and regenerate. */
+:root {
+  --color-accent: #3B6FE0;
+  --color-background: #FFFFFF;
+  --color-background-secondary: #F5F5F7;
+  --color-background-tertiary: #EBEBEF;
+  --color-text: #1D1D1F;
+  --color-text-secondary: #6E6E73;
+  --color-text-tertiary: #AEAEB2;
+  --color-separator: #E2E2E6;
+  --color-selection: #DDE7FB;
+  --color-overdue: #C8362F;
+  --color-success: #2E8B57;
+  --color-priority-high: #C8362F;
+  --color-priority-medium: #D9822B;
+  --color-priority-low: #3B6FE0;
+  --color-span-date: #3B6FE0;
+  --color-span-time: #0E8C9A;
+  --color-span-list: #7A4FD1;
+  --color-span-tag: #2E8B57;
+  --color-span-priority: #D9822B;
+  --color-span-recurrence: #C23B8A;
+  --space-xxs: 2px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-xxl: 32px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --type-caption-size: 11px;
+  --type-caption-line-height: 14px;
+  --type-caption-weight: 400;
+  --type-footnote-size: 12px;
+  --type-footnote-line-height: 16px;
+  --type-footnote-weight: 400;
+  --type-body-size: 13px;
+  --type-body-line-height: 18px;
+  --type-body-weight: 400;
+  --type-body-strong-size: 13px;
+  --type-body-strong-line-height: 18px;
+  --type-body-strong-weight: 600;
+  --type-callout-size: 14px;
+  --type-callout-line-height: 19px;
+  --type-callout-weight: 400;
+  --type-title-size: 17px;
+  --type-title-line-height: 22px;
+  --type-title-weight: 600;
+  --type-large-title-size: 22px;
+  --type-large-title-line-height: 28px;
+  --type-large-title-weight: 700;
+  --type-capture-size: 22px;
+  --type-capture-line-height: 28px;
+  --type-capture-weight: 400;
+  --motion-fast: 120ms;
+  --motion-normal: 200ms;
+  --motion-slow: 320ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-accent: #5B8DEF;
+    --color-background: #1E1E20;
+    --color-background-secondary: #2A2A2D;
+    --color-background-tertiary: #353538;
+    --color-text: #F2F2F4;
+    --color-text-secondary: #A1A1A6;
+    --color-text-tertiary: #6E6E73;
+    --color-separator: #3C3C40;
+    --color-selection: #2F3F5F;
+    --color-overdue: #F0655B;
+    --color-success: #4CBB7A;
+    --color-priority-high: #F0655B;
+    --color-priority-medium: #F2A24E;
+    --color-priority-low: #5B8DEF;
+    --color-span-date: #5B8DEF;
+    --color-span-time: #3FB8C6;
+    --color-span-list: #A382EE;
+    --color-span-tag: #4CBB7A;
+    --color-span-priority: #F2A24E;
+    --color-span-recurrence: #E56CB3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-normal: 0ms;
+    --motion-slow: 0ms;
+  }
+}
