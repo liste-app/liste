@@ -32,7 +32,7 @@ use crate::op::{DecodeError, Mutation, Op, SCHEMA_VERSION};
 use crate::undo::{Inverse, UndoStack};
 
 pub use capture::{Captured, Completed};
-pub use query::{LoggedOp, SpaceState, TaskFilter};
+pub use query::{LoggedOp, SpaceState, TaskFilter, TaskOrder, TaskRow};
 pub use snapshot::Snapshot;
 
 /// Errors from the store.
@@ -94,6 +94,7 @@ pub struct Store {
     supported_schema: u32,
     locked: bool,
     on_change: Option<ChangeListener>,
+    generation: u64,
 }
 
 impl Store {
@@ -138,6 +139,7 @@ impl Store {
             supported_schema: SCHEMA_VERSION,
             locked: false,
             on_change: None,
+            generation: 0,
         })
     }
 
@@ -147,10 +149,17 @@ impl Store {
         self.on_change = listener;
     }
 
-    fn changed(&self) {
+    fn changed(&mut self) {
+        self.generation += 1;
         if let Some(l) = &self.on_change {
             l();
         }
+    }
+
+    /// Counts changes to materialized state since the store was opened;
+    /// anything derived from a read stays valid while it holds still.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Refuse every read and write of task data until [`unlock`](Self::unlock).
@@ -209,7 +218,8 @@ impl Store {
         mutation: Mutation,
     ) -> Op {
         Op {
-            schema_version: self.supported_schema.min(SCHEMA_VERSION),
+            schema_version: Op::required_schema_version(entity_type, &mutation)
+                .min(self.supported_schema.max(1)),
             op_id: Id::new(),
             space_id,
             device_id: self.device(),
@@ -464,6 +474,17 @@ impl Store {
         query::lists(&self.conn, space_id)
     }
 
+    pub fn filter(&self, id: Id) -> Result<Option<crate::model::Filter>> {
+        self.check_unlocked()?;
+        query::filter(&self.conn, id)
+    }
+
+    /// Live saved filters in a space in manual order.
+    pub fn filters(&self, space_id: Id) -> Result<Vec<crate::model::Filter>> {
+        self.check_unlocked()?;
+        query::filters(&self.conn, space_id)
+    }
+
     pub fn tag(&self, id: Id) -> Result<Option<crate::model::Tag>> {
         self.check_unlocked()?;
         query::tag(&self.conn, id)
@@ -480,10 +501,30 @@ impl Store {
         query::task(&self.conn, id)
     }
 
-    /// Live tasks matching the filter, in manual order.
+    /// Tasks matching the filter, in its order.
     pub fn tasks(&self, space_id: Id, filter: &TaskFilter) -> Result<Vec<crate::model::Task>> {
         self.check_unlocked()?;
         query::tasks(&self.conn, space_id, filter)
+    }
+
+    /// A window of the tasks matching the filter (`offset`, `limit`), each
+    /// with its outline depth. With [`count`](Self::count) this is what a
+    /// virtualized list asks for: the total, then only the rows on screen.
+    pub fn task_rows(&self, space_id: Id, filter: &TaskFilter) -> Result<Vec<TaskRow>> {
+        self.check_unlocked()?;
+        query::task_rows(&self.conn, space_id, filter)
+    }
+
+    /// Every status name on an open task in the space, `open` first.
+    pub fn statuses(&self, space_id: Id) -> Result<Vec<String>> {
+        self.check_unlocked()?;
+        query::statuses(&self.conn, space_id)
+    }
+
+    /// How many tasks match the filter, ignoring its window.
+    pub fn count(&self, space_id: Id, filter: &TaskFilter) -> Result<usize> {
+        self.check_unlocked()?;
+        query::count(&self.conn, space_id, filter)
     }
 
     /// Full-text search over live task titles and notes; every whitespace
@@ -558,5 +599,11 @@ impl Store {
     #[doc(hidden)]
     pub fn search_plan(&self) -> Result<Vec<String>> {
         query::search_plan(&self.conn)
+    }
+
+    /// The query plan for the open-task count and window in a space.
+    #[doc(hidden)]
+    pub fn window_plan(&self, space_id: Id) -> Result<Vec<String>> {
+        query::window_plan(&self.conn, space_id)
     }
 }

@@ -136,6 +136,7 @@ pub(super) fn import(tx: &Transaction, snapshot: &Snapshot, now_ms: u64) -> Resu
     tx.execute("DELETE FROM tasks WHERE space_id = ?1", params![space_id])?;
     tx.execute("DELETE FROM lists WHERE space_id = ?1", params![space_id])?;
     tx.execute("DELETE FROM tags WHERE space_id = ?1", params![space_id])?;
+    tx.execute("DELETE FROM filters WHERE space_id = ?1", params![space_id])?;
     tx.execute(
         "DELETE FROM removed_tag_adds WHERE space_id = ?1",
         params![space_id],
@@ -181,9 +182,34 @@ pub(super) fn import(tx: &Transaction, snapshot: &Snapshot, now_ms: u64) -> Resu
             tag.deleted_at
         ])?;
     }
+    for f in &snapshot.state.filters {
+        tx.prepare_cached(
+            "INSERT INTO filters (id, space_id, name, position, list_id, tag_id, filter_priority,
+                filter_status, due_from_day, due_to_day, include_completed, created_at,
+                modified_at, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        )?
+        .execute(params![
+            f.id,
+            space_id,
+            f.name,
+            f.position,
+            f.list_id,
+            f.tag_id,
+            f.priority.map(|p| p as i64),
+            f.status,
+            f.due_from_day,
+            f.due_to_day,
+            i64::from(f.include_completed),
+            f.created_at,
+            f.modified_at,
+            f.deleted_at
+        ])?;
+    }
     for task in &snapshot.state.tasks {
         insert_task(tx, task)?;
     }
+    super::apply::rebuild_outline(tx, space_id)?;
     for add in &snapshot.tag_adds {
         tx.prepare_cached(
             "INSERT OR IGNORE INTO task_tags (task_id, tag_id, add_id) VALUES (?1, ?2, ?3)",

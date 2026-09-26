@@ -140,6 +140,71 @@ pub const MIGRATIONS: &[&str] = &[
         INSERT INTO tasks_fts (rowid, title, notes) VALUES (new.rid, new.title, new.notes);
     END;
     "#,
+    // 2: outline order. `sort_key` is a task's materialized path: each
+    // ancestor's position key and id, then its own, separated by `/`, so a
+    // window of a manual-order list comes straight off an index with
+    // subtasks under their parents; `depth` is the number of ancestors.
+    // The id keeps keys unique when siblings share a position (every
+    // captured task starts at the same key), and `.` sorts before `/`, so
+    // a subtree is exactly the range between the key plus `/` and the key
+    // plus `0`. Both columns are derived from `position` and `parent_id`
+    // and maintained by apply.
+    // The partial indexes cover the open-task windows and counts (manual
+    // order, one list, a due range), each ending in `id` so a window's
+    // order comes off the index with no sort. The narrow status index is
+    // last on purpose: the planner takes the latest of equally usable
+    // partial indexes, and the plain count should read the narrowest.
+    r#"
+    ALTER TABLE tasks ADD COLUMN sort_key TEXT NOT NULL DEFAULT 'V';
+    ALTER TABLE tasks ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX tasks_space_sort ON tasks (space_id, sort_key, id);
+    CREATE INDEX tasks_space_open ON tasks (space_id, sort_key, id)
+        WHERE completed_at IS NULL AND deleted_at IS NULL;
+    CREATE INDEX tasks_space_list_open ON tasks (space_id, list_id, sort_key, id)
+        WHERE completed_at IS NULL AND deleted_at IS NULL;
+    CREATE INDEX tasks_space_due_open ON tasks (space_id, due_at, sort_key, id)
+        WHERE completed_at IS NULL AND deleted_at IS NULL;
+    CREATE INDEX tasks_space_status_open ON tasks (space_id, status)
+        WHERE completed_at IS NULL AND deleted_at IS NULL;
+    CREATE INDEX tasks_space_reminder_open ON tasks (space_id, sort_key, id)
+        WHERE reminder_at IS NOT NULL AND completed_at IS NULL AND deleted_at IS NULL;
+    CREATE TEMP TABLE outline AS
+        WITH RECURSIVE walk(id, key, depth) AS (
+            SELECT id, position || '.' || hex(id), 0 FROM tasks
+             WHERE parent_id IS NULL OR parent_id NOT IN (SELECT id FROM tasks)
+            UNION ALL
+            SELECT t.id, w.key || '/' || t.position || '.' || hex(t.id), w.depth + 1
+              FROM tasks t JOIN walk w ON t.parent_id = w.id
+             WHERE w.depth < 64
+        )
+        SELECT id, key, depth FROM walk;
+    CREATE INDEX temp.outline_id ON outline (id);
+    UPDATE tasks SET
+        sort_key = coalesce((SELECT key FROM outline WHERE outline.id = tasks.id), position || '.' || hex(id)),
+        depth = coalesce((SELECT depth FROM outline WHERE outline.id = tasks.id), 0);
+    DROP TABLE outline;
+    "#,
+    // 3: saved filters (Section 5), an entity like lists. Criteria columns
+    // are named after their fields; NULL means the criterion is off.
+    r#"
+    CREATE TABLE filters (
+        id                BLOB    PRIMARY KEY,
+        space_id          BLOB    NOT NULL,
+        name              TEXT    NOT NULL DEFAULT '',
+        position          TEXT    NOT NULL DEFAULT 'V',
+        list_id           BLOB,
+        tag_id            BLOB,
+        filter_priority   INTEGER,
+        filter_status     TEXT,
+        due_from_day      INTEGER,
+        due_to_day        INTEGER,
+        include_completed INTEGER NOT NULL DEFAULT 0,
+        created_at        INTEGER NOT NULL DEFAULT 0,
+        modified_at       INTEGER NOT NULL DEFAULT 0,
+        deleted_at        INTEGER
+    ) WITHOUT ROWID;
+    CREATE INDEX filters_space ON filters (space_id, position);
+    "#,
 ];
 
 /// Apply every migration the database has not seen. Returns the versions

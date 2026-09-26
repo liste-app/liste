@@ -114,6 +114,48 @@ fn cli_capture_works_with_the_gui_running() {
     assert!(client.task(task.id).unwrap().completed_at.is_none());
     assert!(client.redo().unwrap());
     assert!(client.task(task.id).unwrap().completed_at.is_some());
+    // Saved filters over IPC: create, list, query through, update, delete,
+    // undo. The filter's due window is resolved by the host.
+    let soon = client
+        .create_filter(
+            "Soon",
+            liste_ipc::FilterDefinition {
+                due_to_day: Some(7),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(soon.name, "Soon");
+    assert_eq!(client.filters().unwrap().len(), 1);
+    let (later, _) = client
+        .capture("plan trip next year", Some("Europe/Istanbul"))
+        .unwrap();
+    let query = liste_ipc::TaskQuery {
+        filter_id: Some(soon.id),
+        include_completed: true,
+        ..Default::default()
+    };
+    let matched = client.query(query.clone()).unwrap();
+    assert_eq!(client.count(query.clone()).unwrap(), matched.len());
+    assert!(matched.iter().any(|t| t.id == task.id), "due tomorrow");
+    assert!(!matched.iter().any(|t| t.id == later.id), "due next year");
+    let renamed = client
+        .update_filter(
+            soon.id,
+            Some("Any time".into()),
+            Some(liste_ipc::FilterDefinition::default()),
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(renamed.name, "Any time");
+    assert_eq!(renamed.definition.due_to_day, None);
+    assert!(client.count(query.clone()).unwrap() >= 2);
+    assert!(client.delete_filter(soon.id).unwrap());
+    assert!(client.filters().unwrap().is_empty());
+    assert!(client.undo().unwrap());
+    assert_eq!(client.filters().unwrap()[0].name, "Any time");
+    assert!(client.delete_filter(soon.id).unwrap());
     // Many clients at once.
     let endpoint = host.endpoint().clone();
     let handles: Vec<_> = (0..8)
@@ -132,6 +174,29 @@ fn cli_capture_works_with_the_gui_running() {
         assert!(h.join().unwrap() > 0);
     }
     assert_eq!(client.search("task", 200).unwrap().len(), 80);
+    // The window: a count, then pages; Today and Upcoming are queries.
+    client.uncomplete(task.id).unwrap();
+    let all = liste_ipc::TaskQuery::default();
+    let total = client.count(all.clone()).unwrap();
+    assert_eq!(total, 82);
+    // The count is served from the host's cache until the store changes.
+    assert_eq!(client.count(all.clone()).unwrap(), 82);
+    client.capture("one more", None).unwrap();
+    assert_eq!(client.count(all.clone()).unwrap(), 83);
+    assert!(client.undo().unwrap());
+    assert_eq!(client.count(all.clone()).unwrap(), 82);
+    let page = client
+        .query(liste_ipc::TaskQuery {
+            offset: 80,
+            limit: 10,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(page.len(), 2);
+    assert_eq!(client.query(all).unwrap().len(), 82);
+    assert!(client.today().unwrap().is_empty());
+    assert!(client.upcoming(3).unwrap().iter().any(|t| t.id == task.id));
+    assert_eq!(client.statuses().unwrap(), vec!["open"]);
     host.shutdown();
 }
 

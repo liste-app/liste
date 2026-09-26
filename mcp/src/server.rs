@@ -330,6 +330,7 @@ impl Liste {
             list: args.list,
             add_tags: args.add_tags,
             remove_tags: args.remove_tags,
+            ..Default::default()
         };
         match self.call(|c| c.update(id, patch.clone())) {
             Ok(task) => task_result(task),

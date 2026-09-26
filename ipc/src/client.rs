@@ -7,8 +7,9 @@ use uuid::Uuid;
 
 use crate::paths::Endpoint;
 use crate::protocol::{
-    Body, DebugRequest, IpcError, ListView, Message, PROTOCOL_VERSION, PreviewView, Request,
-    Response, SpanView, StatusView, TaskPatch, TaskView,
+    Body, DebugRequest, FilterDefinition, FilterView, IpcError, ListView, Message,
+    PROTOCOL_VERSION, PreviewView, Request, Response, SpanView, StatusView, TagView, TaskPatch,
+    TaskQuery, TaskView,
 };
 use crate::transport::{self, Stream};
 
@@ -243,6 +244,113 @@ impl Client {
 
     pub fn list_tasks(&mut self, list_id: Option<Uuid>) -> Result<Vec<TaskView>, ClientError> {
         Client::expect_tasks(self.call(Request::ListTasks { list_id })?)
+    }
+
+    pub fn query(&mut self, query: TaskQuery) -> Result<Vec<TaskView>, ClientError> {
+        Client::expect_tasks(self.call(Request::Query(query))?)
+    }
+
+    /// How many tasks `query` matches, ignoring its window.
+    pub fn count(&mut self, query: TaskQuery) -> Result<usize, ClientError> {
+        match self.call(Request::Count(query))? {
+            Response::Count { total } => Ok(total),
+            other => Err(ClientError::Protocol(format!(
+                "expected count, got {other:?}"
+            ))),
+        }
+    }
+
+    /// Every status name in use.
+    pub fn statuses(&mut self) -> Result<Vec<String>, ClientError> {
+        match self.call(Request::Statuses)? {
+            Response::Statuses(s) => Ok(s),
+            other => Err(ClientError::Protocol(format!(
+                "expected statuses, got {other:?}"
+            ))),
+        }
+    }
+
+    pub fn reorder(
+        &mut self,
+        id: Uuid,
+        after: Option<Uuid>,
+        before: Option<Uuid>,
+    ) -> Result<TaskView, ClientError> {
+        Client::expect_task(self.call(Request::Reorder { id, after, before })?)
+    }
+
+    pub fn delete(&mut self, id: Uuid) -> Result<bool, ClientError> {
+        Client::expect_done(self.call(Request::Delete { id })?)
+    }
+
+    pub fn tags(&mut self) -> Result<Vec<TagView>, ClientError> {
+        match self.call(Request::Tags)? {
+            Response::Tags(t) => Ok(t),
+            other => Err(ClientError::Protocol(format!(
+                "expected tags, got {other:?}"
+            ))),
+        }
+    }
+
+    pub fn create_list(&mut self, title: &str) -> Result<ListView, ClientError> {
+        match self.call(Request::CreateList {
+            title: title.to_owned(),
+        })? {
+            Response::List(l) => Ok(l),
+            other => Err(ClientError::Protocol(format!(
+                "expected list, got {other:?}"
+            ))),
+        }
+    }
+
+    pub fn filters(&mut self) -> Result<Vec<FilterView>, ClientError> {
+        match self.call(Request::Filters)? {
+            Response::Filters(f) => Ok(f),
+            other => Err(ClientError::Protocol(format!(
+                "expected filters, got {other:?}"
+            ))),
+        }
+    }
+
+    pub fn create_filter(
+        &mut self,
+        name: &str,
+        definition: FilterDefinition,
+    ) -> Result<FilterView, ClientError> {
+        Client::expect_filter(self.call(Request::CreateFilter {
+            name: name.to_owned(),
+            definition,
+        })?)
+    }
+
+    pub fn update_filter(
+        &mut self,
+        id: Uuid,
+        name: Option<String>,
+        definition: Option<FilterDefinition>,
+        after: Option<Uuid>,
+        before: Option<Uuid>,
+    ) -> Result<FilterView, ClientError> {
+        Client::expect_filter(self.call(Request::UpdateFilter {
+            id,
+            name,
+            definition,
+            after,
+            before,
+        })?)
+    }
+
+    pub fn delete_filter(&mut self, id: Uuid) -> Result<bool, ClientError> {
+        Client::expect_done(self.call(Request::DeleteFilter { id })?)
+    }
+
+    fn expect_filter(r: Response) -> Result<FilterView, ClientError> {
+        match r {
+            Response::Filter(f) => Ok(f),
+            other => Err(ClientError::Protocol(format!(
+                "expected filter, got {other:?}"
+            ))),
+        }
     }
 
     pub fn task(&mut self, id: Uuid) -> Result<TaskView, ClientError> {

@@ -16,10 +16,12 @@ let log = Logger(subsystem: "com.example.liste", category: "app")
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private(set) var session: Session!
+    let ui = UIState()
     private var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private var capturePanel: QuickCapturePanel?
     private var hotKey: HotKey?
+    private var reminders: Reminders?
     private let background = CommandLine.arguments.contains("--background")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -39,19 +41,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         LoginItem.registerOnFirstRun()
         installStatusItem()
-        hotKey = HotKey(keyCode: HotKey.space, modifiers: HotKey.option) { [weak self] in
+        let (code, mods) = Preferences.hotKey
+        hotKey = HotKey(keyCode: code, modifiers: mods) { [weak self] in
             self?.showQuickCapture()
         }
         // The panel is built now, while nobody is waiting, so the hotkey
         // only has to order it front (Section 4: under 50 ms).
         capturePanel = QuickCapturePanel(session: session)
+        let reminders = Reminders(session: session)
+        self.reminders = reminders
+        session.onStoreChange = { [weak reminders] in reminders?.reschedule() }
+        reminders.reschedule()
+        NotificationCenter.default.addObserver(forName: .quickCaptureRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showQuickCapture() }
+        }
+        NotificationCenter.default.addObserver(forName: .settingsRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showSettings() }
+        }
         if background {
             NSApp.setActivationPolicy(.accessory)
             log.info("started in the background; socket ready at \(self.session.status?.socketPath ?? "?")")
         } else {
             openMainWindow()
         }
-        #if DEBUG
+        do {
             // `--measure-quick-capture`: show the panel once after launch and
             // log how long it took to appear, for the Section 4 budget.
             if CommandLine.arguments.contains("--measure-quick-capture") {
@@ -59,7 +72,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self?.showQuickCapture()
                 }
             }
-        #endif
+            // `--measure-scroll`: fill the store with the 50,000-task fixture
+            // if it is smaller, show Anytime, and log the frame rate while
+            // the list scrolls. Only meaningful against a scratch store.
+            if CommandLine.arguments.contains("--measure-scroll") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    self?.measureScroll()
+                }
+            }
+        }
+    }
+
+    private func measureScroll() {
+        session.selection = .today
+        session.populateFixtureIfSmall(50_000)
+        guard let scroll = mainWindow?.contentView?.firstScrollView() else {
+            FileHandle.standardError.write(Data("scroll: no scroll view\n".utf8))
+            return
+        }
+        let meter = FrameMeter()
+        let steps = 240
+        Task { @MainActor in
+            // Let the window settle after the fixture load before timing.
+            try? await Task.sleep(for: .seconds(2))
+            // Opening Anytime from Today: three opens to warm up, then ten
+            // measured; the median is the number reported. Main-thread time
+            // is the thread's CPU time until the run loop goes idle; wall
+            // time is beside it.
+            var opens: [MainThreadTimer.Sample] = []
+            for i in 1...13 {
+                self.session.selection = .today
+                try? await Task.sleep(for: .milliseconds(250))
+                let sample = await MainThreadTimer.measure { self.session.selection = .anytime }
+                if i > 3 { opens.append(sample) }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            let sorted = opens.sorted { $0.cpuMilliseconds < $1.cpuMilliseconds }
+            let median = sorted[sorted.count / 2]
+            let rows = self.session.count
+            let query = self.session.lastQueryMilliseconds
+            FileHandle.standardError.write(
+                Data(String(format: "open: Anytime with %d rows in %.1f ms main thread (%.1f ms wall to idle), median of %d after 3 warm-ups, queries %.1f ms; all: %@\n",
+                    rows, median.cpuMilliseconds, median.wallMilliseconds, opens.count, query,
+                    opens.map { String(format: "%.1f", $0.cpuMilliseconds) }.joined(separator: " ")).utf8))
+            // A refresh in place, as a change notification causes: the same
+            // rows re-read and redrawn, nothing else moving.
+            var refreshes: [Double] = []
+            for _ in 1...10 {
+                try? await Task.sleep(for: .milliseconds(250))
+                refreshes.append(await MainThreadTimer.measure { self.session.refresh() }.cpuMilliseconds)
+            }
+            let middle = refreshes.sorted()[refreshes.count / 2]
+            FileHandle.standardError.write(
+                Data(String(format: "refresh: in place in %.1f ms main thread, median of %d; all: %@\n",
+                    middle, refreshes.count, refreshes.map { String(format: "%.1f", $0) }.joined(separator: " ")).utf8))
+            try? await Task.sleep(for: .seconds(1))
+            guard let scroll = self.mainWindow?.contentView?.firstScrollView() else { return }
+            let total = scroll.documentView?.frame.height ?? 0
+            meter.start()
+            var worst = 0.0
+            var sum = 0.0
+            for step in 1...steps {
+                try? await Task.sleep(for: .milliseconds(16))
+                let y = total * CGFloat(step) / CGFloat(steps)
+                let sample = await MainThreadTimer.measure {
+                    scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+                    scroll.reflectScrolledClipView(scroll.contentView)
+                }
+                worst = max(worst, sample.cpuMilliseconds)
+                sum += sample.cpuMilliseconds
+            }
+            let report = meter.stop()
+            FileHandle.standardError.write(
+                Data(String(format: "scroll: %@ over %d rows; main thread per step avg %.1f ms, worst %.1f ms\n",
+                    report, self.session.count, sum / Double(steps), worst).utf8))
+            log.debug("scroll: \(report)")
+        }
+        _ = scroll
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -91,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
             window.title = "Liste"
             window.titlebarAppearsTransparent = true
-            window.contentView = NSHostingView(rootView: MainView(session: session))
+            window.contentView = NSHostingView(rootView: MainView(session: session, ui: ui))
             window.setFrameAutosaveName("Main")
             window.center()
             window.isReleasedWhenClosed = false
@@ -156,47 +245,124 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func buildMainMenu() {
         let main = NSMenu()
+        func add(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String, _ mods: NSEvent.ModifierFlags = [.command], target: AnyObject? = nil) {
+            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
+            item.keyEquivalentModifierMask = mods
+            item.target = target
+        }
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About Liste", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        add(appMenu, "About Liste", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "", [])
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide Liste", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        add(appMenu, "Settings\u{2026}", #selector(showSettings), ",", target: self)
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Liste", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        add(appMenu, "Hide Liste", #selector(NSApplication.hide(_:)), "h")
+        add(appMenu, "Quit Liste", #selector(NSApplication.terminate(_:)), "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
 
         let fileItem = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
-        let quick = fileMenu.addItem(withTitle: "Quick Capture", action: #selector(captureFromMenu), keyEquivalent: "n")
-        quick.target = self
-        fileMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        add(fileMenu, "New Task", #selector(newTask), "n", target: self)
+        add(fileMenu, "New List\u{2026}", #selector(newList), "n", [.command, .shift], target: self)
+        add(fileMenu, "Quick Capture", #selector(captureFromMenu), " ", [.option], target: self)
+        fileMenu.addItem(.separator())
+        add(fileMenu, "Close", #selector(NSWindow.performClose(_:)), "w")
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
-        let undo = editMenu.addItem(withTitle: "Undo", action: #selector(undoFromMenu), keyEquivalent: "z")
-        undo.target = self
-        let redo = editMenu.addItem(withTitle: "Redo", action: #selector(redoFromMenu), keyEquivalent: "Z")
-        redo.target = self
+        add(editMenu, "Undo", #selector(undoFromMenu), "z", target: self)
+        add(editMenu, "Redo", #selector(redoFromMenu), "z", [.command, .shift], target: self)
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        add(editMenu, "Cut", #selector(NSText.cut(_:)), "x")
+        add(editMenu, "Copy", #selector(NSText.copy(_:)), "c")
+        add(editMenu, "Paste", #selector(NSText.paste(_:)), "v")
+        add(editMenu, "Select All", #selector(NSText.selectAll(_:)), "a")
+        editMenu.addItem(.separator())
+        add(editMenu, "Complete", #selector(completeSelected), " ", [], target: self)
+        add(editMenu, "Rename", #selector(renameSelected), "\r", [], target: self)
+        add(editMenu, "Delete", #selector(deleteSelected), "\u{8}", [], target: self)
+        add(editMenu, "Move Up", #selector(moveUp), String(UnicodeScalar(NSUpArrowFunctionKey)!), [.option], target: self)
+        add(editMenu, "Move Down", #selector(moveDown), String(UnicodeScalar(NSDownArrowFunctionKey)!), [.option], target: self)
         editItem.submenu = editMenu
         main.addItem(editItem)
 
+        let viewItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        add(viewMenu, "Search", #selector(focusSearch), "f", target: self)
+        add(viewMenu, "Command Palette", #selector(showPalette), "k", target: self)
+        add(viewMenu, "Show Inspector", #selector(toggleInspector), "i", target: self)
+        viewMenu.addItem(.separator())
+        add(viewMenu, "List", #selector(showList), "1", [.command, .shift], target: self)
+        add(viewMenu, "Board", #selector(showBoard), "2", [.command, .shift], target: self)
+        viewItem.submenu = viewMenu
+        main.addItem(viewItem)
+
+        let goItem = NSMenuItem()
+        let goMenu = NSMenu(title: "Go")
+        add(goMenu, "Today", #selector(goToday), "1", target: self)
+        add(goMenu, "Upcoming", #selector(goUpcoming), "2", target: self)
+        add(goMenu, "Anytime", #selector(goAnytime), "3", target: self)
+        add(goMenu, "Completed", #selector(goCompleted), "4", target: self)
+        add(goMenu, "Inbox", #selector(goInbox), "5", target: self)
+        goItem.submenu = goMenu
+        main.addItem(goItem)
+
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
-        let show = windowMenu.addItem(withTitle: "Liste", action: #selector(openFromMenu), keyEquivalent: "0")
-        show.target = self
-        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        add(windowMenu, "Liste", #selector(openFromMenu), "0", target: self)
+        add(windowMenu, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
         NSApp.mainMenu = main
         NSApp.windowsMenu = windowMenu
+    }
+
+    @objc private func newTask() { openMainWindow(); ui.newTaskRequest += 1 }
+    @objc private func newList() { openMainWindow(); ui.newListRequest += 1 }
+    @objc private func focusSearch() { openMainWindow(); ui.searchFocusRequest += 1 }
+    @objc private func showPalette() { openMainWindow(); ui.paletteRequest += 1 }
+    @objc private func toggleInspector() { ui.showInspector.toggle() }
+    @objc private func showList() { ui.viewMode = .list }
+    @objc private func showBoard() { ui.viewMode = .board }
+    @objc private func goToday() { session.selection = .today }
+    @objc private func goUpcoming() { session.selection = .upcoming }
+    @objc private func goAnytime() { session.selection = .anytime }
+    @objc private func goCompleted() { session.selection = .completed }
+    @objc private func goInbox() { session.selection = .inbox }
+    @objc private func showSettings() { SettingsWindow.show(session: session, delegate: self) }
+
+    @objc private func completeSelected() {
+        guard let task = session.find(ui.selectedTaskId) else { return }
+        session.setCompleted(task, task.completedAt == nil)
+    }
+
+    @objc private func renameSelected() { ui.editRequest += 1 }
+
+    @objc private func deleteSelected() {
+        guard let task = session.find(ui.selectedTaskId) else { return }
+        session.delete(task)
+    }
+
+    @objc private func moveUp() {
+        guard let task = session.find(ui.selectedTaskId) else { return }
+        session.move(task, up: true)
+    }
+
+    @objc private func moveDown() {
+        guard let task = session.find(ui.selectedTaskId) else { return }
+        session.move(task, up: false)
+    }
+
+    /// Re-register the quick-capture hotkey after Settings changed it.
+    func reloadHotKey() {
+        hotKey?.unregister()
+        let (code, mods) = Preferences.hotKey
+        hotKey = HotKey(keyCode: code, modifiers: mods) { [weak self] in
+            self?.showQuickCapture()
+        }
     }
 
     @objc private func undoFromMenu() {

@@ -59,7 +59,18 @@ fn table(entity: EntityType) -> &'static str {
         EntityType::List => "lists",
         EntityType::Task => "tasks",
         EntityType::Tag => "tags",
+        EntityType::Filter => "filters",
+        // Never reached: ops for unknown kinds are skipped before materializing.
+        EntityType::Unknown => "unknown_entities",
     }
+}
+
+/// Whether this build can materialize the op: a version it supports, a
+/// mutation kind and an entity kind it knows.
+fn applicable(op: &Op, supported_schema: u32) -> bool {
+    op.schema_version <= supported_schema
+        && !matches!(op.mutation, Mutation::Unknown { .. })
+        && op.entity_type != EntityType::Unknown
 }
 
 /// Log the op and materialize it. `seq` is the server's number if known.
@@ -99,7 +110,7 @@ pub(super) fn apply_op(
             inverse: None,
         });
     }
-    if op.schema_version > supported_schema || matches!(op.mutation, Mutation::Unknown { .. }) {
+    if !applicable(op, supported_schema) {
         return Ok(Outcome {
             status: Applied::Skipped,
             inverse: None,
@@ -132,7 +143,7 @@ pub(super) fn reapply_skipped(
     let mut count = 0;
     for payload in payloads {
         let op = Op::decode(&payload)?;
-        if op.schema_version > supported_schema || matches!(op.mutation, Mutation::Unknown { .. }) {
+        if !applicable(&op, supported_schema) {
             continue;
         }
         materialize(tx, &op)?;
@@ -169,6 +180,10 @@ fn ensure_row(tx: &Transaction, op: &Op) -> Result<bool> {
         EntityType::Tag => tx
             .prepare_cached("INSERT OR IGNORE INTO tags (id, space_id) VALUES (?1, ?2)")?
             .execute(params![op.entity_id, op.space_id])?,
+        EntityType::Filter => tx
+            .prepare_cached("INSERT OR IGNORE INTO filters (id, space_id) VALUES (?1, ?2)")?
+            .execute(params![op.entity_id, op.space_id])?,
+        EntityType::Unknown => 0,
     };
     Ok(changed > 0)
 }
@@ -252,12 +267,25 @@ fn materialize(tx: &Transaction, op: &Op) -> Result<Option<Inverse>> {
     let created = ensure_row(tx, op)?;
     bump_modified(tx, op)?;
     let is_task = op.entity_type == EntityType::Task;
+    if created && is_task {
+        // The new row takes its place in the outline, and subtasks whose
+        // ops arrived before their parent's leave the top level.
+        refresh_outline(tx, op.entity_id)?;
+        refresh_children_outline(tx, op.entity_id)?;
+    }
     let result = match &op.mutation {
         Mutation::Set { field, value } => {
             if !field.settable(op.entity_type) || !value.fits(field.value_type()) {
                 None
             } else {
-                lww_set(tx, op, *field, value)?.map(|previous| Mutation::Set {
+                let previous = lww_set(tx, op, *field, value)?;
+                if previous.is_some()
+                    && is_task
+                    && matches!(field, Field::Position | Field::ParentId)
+                {
+                    refresh_outline(tx, op.entity_id)?;
+                }
+                previous.map(|previous| Mutation::Set {
                     field: *field,
                     value: previous,
                 })
@@ -340,6 +368,122 @@ fn materialize(tx: &Transaction, op: &Op) -> Result<Option<Inverse>> {
         return Ok(inverse(op, Mutation::Delete));
     }
     Ok(result.and_then(|m| inverse(op, m)))
+}
+
+/// The deepest outline a task can sit at; a parent chain longer than this
+/// (only possible through concurrent edits) is cut at the top level.
+const MAX_DEPTH: i64 = 64;
+
+/// Recompute a task's `sort_key` and `depth` from its position and its
+/// parent, and shift its whole subtree along with it.
+///
+/// A parent that is itself under this task (a cycle, which concurrent
+/// re-parenting on two devices can produce) is ignored: the task is placed
+/// at the top level so every row still has a place in the outline.
+fn refresh_outline(tx: &Transaction, task: Id) -> Result<()> {
+    let Some((space, position, parent, old_key, old_depth)) = tx
+        .prepare_cached(
+            "SELECT space_id, position, parent_id, sort_key, depth FROM tasks WHERE id = ?1",
+        )?
+        .query_row(params![task], |r| {
+            Ok((
+                r.get::<_, Id>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<Id>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, i64>(4)?,
+            ))
+        })
+        .optional()?
+    else {
+        return Ok(());
+    };
+    let own = format!("{position}.{}", hex(task));
+    let mut new_key = own.clone();
+    let mut new_depth = 0;
+    if let Some(parent) = parent
+        && let Some((parent_key, parent_depth)) = tx
+            .prepare_cached("SELECT sort_key, depth FROM tasks WHERE id = ?1 AND space_id = ?2")?
+            .query_row(params![parent, space], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
+            .optional()?
+        && parent_depth < MAX_DEPTH
+        && parent_key != old_key
+        && !parent_key.starts_with(&format!("{old_key}/"))
+    {
+        new_key = format!("{parent_key}/{own}");
+        new_depth = parent_depth + 1;
+    }
+    if new_key == old_key && new_depth == old_depth {
+        return Ok(());
+    }
+    tx.prepare_cached("UPDATE tasks SET sort_key = ?2, depth = ?3 WHERE id = ?1")?
+        .execute(params![task, new_key, new_depth])?;
+    // Descendants keep their tails. Their keys all start with the old key
+    // and a slash, and `/` is the character just below `0`, so the range
+    // `[old/, old0)` is exactly the subtree and comes off the index.
+    tx.prepare_cached(
+        "UPDATE tasks SET sort_key = ?3 || substr(sort_key, ?4), depth = depth + ?5
+         WHERE space_id = ?1 AND sort_key >= ?2 || '/' AND sort_key < ?2 || '0'",
+    )?
+    .execute(params![
+        space,
+        old_key,
+        new_key,
+        old_key.len() as i64 + 1,
+        new_depth - old_depth
+    ])?;
+    Ok(())
+}
+
+/// The id as SQLite's `hex()` renders it, so keys built here and in SQL
+/// agree.
+fn hex(id: Id) -> String {
+    id.as_bytes().iter().map(|b| format!("{b:02X}")).collect()
+}
+
+/// Attach the children of a task whose row has just appeared.
+fn refresh_children_outline(tx: &Transaction, parent: Id) -> Result<()> {
+    let children: Vec<Id> = tx
+        .prepare_cached("SELECT id FROM tasks WHERE parent_id = ?1")?
+        .query_map(params![parent], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for child in children {
+        refresh_outline(tx, child)?;
+    }
+    Ok(())
+}
+
+/// Recompute every task's outline place in a space, after a bulk load.
+pub(super) fn rebuild_outline(tx: &Transaction, space_id: Id) -> Result<()> {
+    tx.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS outline (id BLOB PRIMARY KEY, key TEXT NOT NULL, depth INTEGER NOT NULL);
+         DELETE FROM outline;",
+    )?;
+    tx.prepare_cached(
+        "INSERT INTO outline (id, key, depth)
+         WITH RECURSIVE walk(id, key, depth) AS (
+             SELECT id, position || '.' || hex(id), 0 FROM tasks
+              WHERE space_id = ?1
+                AND (parent_id IS NULL OR parent_id NOT IN (SELECT id FROM tasks WHERE space_id = ?1))
+             UNION ALL
+             SELECT t.id, w.key || '/' || t.position || '.' || hex(t.id), w.depth + 1
+               FROM tasks t JOIN walk w ON t.parent_id = w.id
+              WHERE t.space_id = ?1 AND w.depth < 64
+         )
+         SELECT id, key, depth FROM walk",
+    )?
+    .execute(params![space_id])?;
+    tx.prepare_cached(
+        "UPDATE tasks SET
+            sort_key = coalesce((SELECT key FROM outline WHERE outline.id = tasks.id), position || '.' || hex(id)),
+            depth = coalesce((SELECT depth FROM outline WHERE outline.id = tasks.id), 0)
+         WHERE space_id = ?1",
+    )?
+    .execute(params![space_id])?;
+    tx.execute_batch("DELETE FROM outline")?;
+    Ok(())
 }
 
 fn tag_present(tx: &Transaction, task: Id, tag: Id) -> Result<bool> {

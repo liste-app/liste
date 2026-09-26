@@ -167,6 +167,17 @@ fn every_field_kind_round_trips_through_the_tables() {
         )
         .unwrap();
     assert_eq!(inbox.len(), 1, "the parent is in the inbox");
+    let untagged = store
+        .tasks(
+            space,
+            &TaskFilter {
+                untagged: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(untagged.len(), 1, "the parent has no tag");
+    assert_eq!(untagged[0].id, parent);
 }
 
 #[test]
@@ -378,4 +389,336 @@ fn a_locked_store_answers_locked_not_plaintext() {
     assert_eq!(store.op_count(space).unwrap(), 1);
     store.unlock();
     assert_eq!(store.task(task).unwrap().unwrap().title, "secret");
+}
+
+#[test]
+fn manual_order_is_an_outline_and_windows_count_the_whole_listing() {
+    let mut store = Store::open_in_memory(Id::new()).unwrap();
+    let space = Id::new();
+    let keys = liste_core::fractional::rebalanced(4);
+    let ids: Vec<Id> = (0..4).map(|_| Id::new()).collect();
+    let mut ops = Vec::new();
+    for (i, id) in ids.iter().enumerate() {
+        ops.push(store.op(
+            space,
+            EntityType::Task,
+            *id,
+            set(Field::Title, format!("t{i}")),
+        ));
+        ops.push(store.op(
+            space,
+            EntityType::Task,
+            *id,
+            set(Field::Position, keys[i].clone()),
+        ));
+    }
+    // t3 becomes a subtask of t0 and sits between t0 and t1 in the outline
+    // whatever its own key says; t2 becomes a subtask of t3, two deep.
+    ops.push(store.op(
+        space,
+        EntityType::Task,
+        ids[3],
+        set(Field::ParentId, Value::Id(ids[0])),
+    ));
+    ops.push(store.op(
+        space,
+        EntityType::Task,
+        ids[2],
+        set(Field::ParentId, Value::Id(ids[3])),
+    ));
+    store.commit(&ops).unwrap();
+    let filter = TaskFilter::default();
+    let rows = store.task_rows(space, &filter).unwrap();
+    let titles: Vec<(&str, u32)> = rows
+        .iter()
+        .map(|r| (r.task.title.as_str(), r.depth))
+        .collect();
+    assert_eq!(titles, vec![("t0", 0), ("t3", 1), ("t2", 2), ("t1", 0)]);
+    assert_eq!(store.count(space, &filter).unwrap(), 4);
+    let has: Vec<bool> = rows.iter().map(|r| r.has_subtasks).collect();
+    assert_eq!(has, vec![true, true, false, false]);
+    // Collapsing t3 hides its subtree from the rows and the count.
+    let collapsed = TaskFilter {
+        collapsed: vec![ids[3]],
+        ..Default::default()
+    };
+    let rows = store.task_rows(space, &collapsed).unwrap();
+    let titles: Vec<&str> = rows.iter().map(|r| r.task.title.as_str()).collect();
+    assert_eq!(titles, vec!["t0", "t3", "t1"]);
+    assert_eq!(store.count(space, &collapsed).unwrap(), 3);
+    // A window in the middle: the count is unchanged and the first row's
+    // depth is kept from the stored outline.
+    let window = store
+        .task_rows(
+            space,
+            &TaskFilter {
+                offset: 1,
+                limit: 2,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let titles: Vec<(&str, u32)> = window
+        .iter()
+        .map(|r| (r.task.title.as_str(), r.depth))
+        .collect();
+    assert_eq!(titles, vec![("t3", 1), ("t2", 2)]);
+    assert_eq!(
+        store
+            .count(
+                space,
+                &TaskFilter {
+                    offset: 1,
+                    limit: 2,
+                    ..Default::default()
+                }
+            )
+            .unwrap(),
+        4
+    );
+    // Completing the middle task lifts its subtask to the level of the
+    // nearest shown ancestor: t2 now shows directly under t0.
+    let done = store.op(
+        space,
+        EntityType::Task,
+        ids[3],
+        set(Field::CompletedAt, 5i64),
+    );
+    store.commit(std::slice::from_ref(&done)).unwrap();
+    let rows = store.task_rows(space, &filter).unwrap();
+    let titles: Vec<(&str, u32)> = rows
+        .iter()
+        .map(|r| (r.task.title.as_str(), r.depth))
+        .collect();
+    assert_eq!(titles, vec![("t0", 0), ("t2", 1), ("t1", 0)]);
+    assert_eq!(store.count(space, &filter).unwrap(), 3);
+    // Moving t0 to the end takes its subtree along.
+    let last = liste_core::fractional::between(Some(&keys[3]), None).unwrap();
+    let mv = store.op(space, EntityType::Task, ids[0], set(Field::Position, last));
+    store.commit(std::slice::from_ref(&mv)).unwrap();
+    let rows = store.task_rows(space, &filter).unwrap();
+    let titles: Vec<&str> = rows.iter().map(|r| r.task.title.as_str()).collect();
+    assert_eq!(titles, vec!["t1", "t0", "t2"]);
+    // Undo puts it back, and a snapshot round trip rebuilds the same outline.
+    store.undo().unwrap();
+    let before: Vec<(String, u32)> = store
+        .task_rows(space, &filter)
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.task.title, r.depth))
+        .collect();
+    assert_eq!(before[0].0, "t0");
+    let snapshot = store.snapshot_unchecked(space).unwrap();
+    let mut other = Store::open_in_memory(Id::new()).unwrap();
+    other.restore(&snapshot).unwrap();
+    let after: Vec<(String, u32)> = other
+        .task_rows(space, &filter)
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.task.title, r.depth))
+        .collect();
+    assert_eq!(after, before);
+}
+
+#[test]
+fn a_subtask_whose_parent_arrives_later_attaches_when_it_does() {
+    let mut store = Store::open_in_memory(Id::new()).unwrap();
+    let space = Id::new();
+    let parent = Id::new();
+    let child = Id::new();
+    let keys = liste_core::fractional::rebalanced(2);
+    let ops = vec![
+        store.op(space, EntityType::Task, child, set(Field::Title, "child")),
+        store.op(
+            space,
+            EntityType::Task,
+            child,
+            set(Field::Position, keys[0].clone()),
+        ),
+        store.op(
+            space,
+            EntityType::Task,
+            child,
+            set(Field::ParentId, Value::Id(parent)),
+        ),
+    ];
+    store.commit(&ops).unwrap();
+    let rows = store.task_rows(space, &TaskFilter::default()).unwrap();
+    assert_eq!(
+        rows[0].depth, 0,
+        "no parent row yet: shown at the top level"
+    );
+    let ops = vec![
+        store.op(space, EntityType::Task, parent, set(Field::Title, "parent")),
+        store.op(
+            space,
+            EntityType::Task,
+            parent,
+            set(Field::Position, keys[1].clone()),
+        ),
+    ];
+    store.commit(&ops).unwrap();
+    let rows = store.task_rows(space, &TaskFilter::default()).unwrap();
+    let titles: Vec<(&str, u32)> = rows
+        .iter()
+        .map(|r| (r.task.title.as_str(), r.depth))
+        .collect();
+    assert_eq!(titles, vec![("parent", 0), ("child", 1)]);
+    // Tasks that never set a position (captured ones) share the default
+    // key and still form an outline, in creation order.
+    let (x, y, z) = (Id::new(), Id::new(), Id::new());
+    let ops = vec![
+        store.op(space, EntityType::Task, x, set(Field::Title, "x")),
+        store.op(space, EntityType::Task, y, set(Field::Title, "y")),
+        store.op(space, EntityType::Task, z, set(Field::Title, "z")),
+        store.op(
+            space,
+            EntityType::Task,
+            y,
+            set(Field::ParentId, Value::Id(x)),
+        ),
+    ];
+    store.commit(&ops).unwrap();
+    let rows = store.task_rows(space, &TaskFilter::default()).unwrap();
+    let titles: Vec<(&str, u32)> = rows
+        .iter()
+        .map(|r| (r.task.title.as_str(), r.depth))
+        .collect();
+    let at = titles.iter().position(|t| t.0 == "x").unwrap();
+    assert_eq!(&titles[at..at + 3], &[("x", 0), ("y", 1), ("z", 0)]);
+    // A parent cycle from concurrent edits leaves every row in place.
+    let cycle = store.op(
+        space,
+        EntityType::Task,
+        parent,
+        set(Field::ParentId, Value::Id(child)),
+    );
+    store.commit(std::slice::from_ref(&cycle)).unwrap();
+    assert_eq!(store.count(space, &TaskFilter::default()).unwrap(), 5);
+    assert_eq!(
+        store
+            .task_rows(space, &TaskFilter::default())
+            .unwrap()
+            .len(),
+        5
+    );
+}
+
+#[test]
+fn every_filter_field_round_trips_and_undo_removes_a_new_filter() {
+    let mut store = Store::open_in_memory(Id::new()).unwrap();
+    let space = Id::new();
+    let list = Id::new();
+    let tag = Id::new();
+    let filter = Id::new();
+    let ops = vec![
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::Name, "Errands soon"),
+        ),
+        store.op(space, EntityType::Filter, filter, set(Field::Position, "A")),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::ListId, Value::Id(list)),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::TagId, Value::Id(tag)),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::FilterPriority, 2i64),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::FilterStatus, "doing"),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::DueFromDay, -1i64),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::DueToDay, 3i64),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::IncludeCompleted, true),
+        ),
+        store.op(
+            space,
+            EntityType::Filter,
+            filter,
+            set(Field::CreatedAt, 9i64),
+        ),
+    ];
+    store.commit(&ops).unwrap();
+    let f = store.filter(filter).unwrap().unwrap();
+    assert_eq!(f.name, "Errands soon");
+    assert_eq!(f.position, "A");
+    assert_eq!(f.list_id, Some(list));
+    assert_eq!(f.tag_id, Some(tag));
+    assert_eq!(f.priority, Some(Priority::Medium));
+    assert_eq!(f.status.as_deref(), Some("doing"));
+    assert_eq!(f.due_from_day, Some(-1));
+    assert_eq!(f.due_to_day, Some(3));
+    assert!(f.include_completed);
+    assert_eq!(f.created_at, 9);
+    assert_eq!(store.filters(space).unwrap().len(), 1);
+    // A task field does not land on a filter and a filter field does not
+    // land on a task: both are logged and ignored.
+    let stray = store.op(space, EntityType::Filter, filter, set(Field::Title, "no"));
+    let stray2 = store.op(
+        space,
+        EntityType::Task,
+        Id::new(),
+        set(Field::TagId, Value::Id(tag)),
+    );
+    store.commit(&[stray, stray2]).unwrap();
+    assert_eq!(store.filter(filter).unwrap().unwrap().name, "Errands soon");
+    // Undo of the stray commit removes the empty task it created; undo of
+    // the creating commit removes the filter itself.
+    assert!(store.undo().unwrap());
+    assert!(store.undo().unwrap());
+    assert!(store.filters(space).unwrap().is_empty());
+    assert!(store.redo().unwrap());
+    assert_eq!(store.filters(space).unwrap()[0].name, "Errands soon");
+}
+
+/// The count and the windows a virtualized list asks for come off the
+/// partial indexes: no table rows are read for filtering and no sort runs.
+#[test]
+fn window_plans_come_off_the_partial_indexes() {
+    let mut store = Store::open_in_memory(Id::new()).unwrap();
+    let space = Id::new();
+    fixture::populate(&mut store, space, 500, 1).unwrap();
+    let plans = store.window_plan(space).unwrap();
+    let expect = [
+        "USING INDEX tasks_space_status_open (space_id=?)",
+        "USING INDEX tasks_space_open (space_id=?)",
+        "USING INDEX tasks_space_list_open (space_id=? AND list_id=?)",
+        "USING INDEX tasks_space_due_open (space_id=? AND due_at>? AND due_at<?)",
+        "USING INDEX tasks_space_status_open (space_id=?)",
+        "USING INDEX tasks_space_reminder_open (space_id=?)",
+    ];
+    for (plan, expected) in plans.iter().zip(expect) {
+        assert!(plan.contains(expected), "expected {expected} in:\n{plan}");
+        assert!(!plan.contains("TEMP B-TREE"), "no sort step in:\n{plan}");
+    }
 }

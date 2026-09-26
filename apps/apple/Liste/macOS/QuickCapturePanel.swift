@@ -47,13 +47,13 @@ final class QuickCapturePanel: NSPanel {
         }
         makeKeyAndOrderFront(nil)
         model.focus = true
-        #if DEBUG
+        if CommandLine.arguments.contains("--measure-quick-capture") {
             DispatchQueue.main.async {
                 let ms = (CACurrentMediaTime() - startedAt) * 1000
                 log.debug("quick capture panel visible in \(ms, format: .fixed(precision: 1)) ms")
                 FileHandle.standardError.write(Data("quick capture: \(String(format: "%.1f", ms)) ms\n".utf8))
             }
-        #endif
+        }
     }
 
     func dismiss() {

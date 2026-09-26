@@ -5,22 +5,62 @@ use serde::{Deserialize, Serialize};
 
 use super::Result;
 use crate::ids::Id;
-use crate::model::{List, Priority, Space, Tag, Task};
+use crate::model::{Filter, List, Priority, Space, Tag, Task};
+
 use crate::op::Op;
 
+/// How a task list is ordered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TaskOrder {
+    /// The person's manual order, then id.
+    #[default]
+    Manual,
+    /// Soonest due first, undated last, then manual order.
+    DueThenManual,
+    /// Most recently completed first.
+    CompletedDesc,
+}
+
 /// Which tasks to list. Defaults to every live, incomplete task in the space.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TaskFilter {
     /// `Some(None)` means the inbox (no list); `Some(Some(id))` one list.
     pub list: Option<Option<Id>>,
     /// Only direct subtasks of this task.
     pub parent: Option<Id>,
+    /// Only tasks carrying this tag.
+    pub tag: Option<Id>,
+    /// Only tasks with no tag at all.
+    pub untagged: bool,
+    pub priority: Option<Priority>,
+    pub status: Option<String>,
     /// Only tasks due in `[from, to)` (Unix milliseconds).
     pub due_between: Option<(i64, i64)>,
+    /// Only tasks with a reminder set.
+    pub has_reminder: bool,
     pub include_completed: bool,
+    /// Only completed tasks.
+    pub completed_only: bool,
     pub include_deleted: bool,
+    /// Tasks whose subtrees the listing hides (collapsed in a view).
+    pub collapsed: Vec<Id>,
+    pub order: TaskOrder,
+    /// Rows to skip, for a window into a long list.
+    pub offset: usize,
     /// Zero means no limit.
     pub limit: usize,
+}
+
+/// A task in a listing, with its place in the outline: `depth` is how many
+/// of its ancestors the listing shows above it, so a subtask whose parent
+/// is not shown (completed, filtered out) moves up to its nearest shown
+/// ancestor. Zero outside manual order, where subtasks are plain rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskRow {
+    pub task: Task,
+    pub depth: u32,
+    /// Whether any live task has this one as its parent.
+    pub has_subtasks: bool,
 }
 
 /// An op as the log holds it.
@@ -38,6 +78,9 @@ pub struct SpaceState {
     pub lists: Vec<List>,
     pub tags: Vec<Tag>,
     pub tasks: Vec<Task>,
+    /// Absent in snapshots written before saved filters existed.
+    #[serde(default)]
+    pub filters: Vec<Filter>,
 }
 
 const TASK_COLUMNS: &str = "id, space_id, list_id, parent_id, title, notes, due_at, due_all_day,
@@ -68,6 +111,12 @@ fn task_from_row(r: &Row<'_>) -> rusqlite::Result<Task> {
 }
 
 fn fill_tags(conn: &Connection, tasks: &mut [Task]) -> Result<()> {
+    let mut refs: Vec<&mut Task> = tasks.iter_mut().collect();
+    fill_tags_each(conn, &mut refs)
+}
+
+/// One tag query per task; right for a window of rows.
+fn fill_tags_each(conn: &Connection, tasks: &mut [&mut Task]) -> Result<()> {
     let mut stmt = conn.prepare_cached(
         "SELECT DISTINCT tag_id FROM task_tags WHERE task_id = ?1 ORDER BY tag_id",
     )?;
@@ -84,7 +133,7 @@ fn fill_tags(conn: &Connection, tasks: &mut [Task]) -> Result<()> {
 /// positional `args`), merged into `tasks` by id.
 fn fill_tags_where(
     conn: &Connection,
-    tasks: &mut [Task],
+    tasks: &mut [&mut Task],
     where_sql: &str,
     args: &[Box<dyn rusqlite::ToSql>],
 ) -> Result<()> {
@@ -197,6 +246,47 @@ pub(super) fn tags(conn: &Connection, space_id: Id) -> Result<Vec<Tag>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
+const FILTER_COLUMNS: &str = "id, space_id, name, position, list_id, tag_id, filter_priority,
+    filter_status, due_from_day, due_to_day, include_completed, created_at, modified_at, deleted_at";
+
+fn filter_from_row(r: &Row<'_>) -> rusqlite::Result<Filter> {
+    Ok(Filter {
+        id: r.get(0)?,
+        space_id: r.get(1)?,
+        name: r.get(2)?,
+        position: r.get(3)?,
+        list_id: r.get(4)?,
+        tag_id: r.get(5)?,
+        priority: r.get::<_, Option<i64>>(6)?.map(Priority::from_i64),
+        status: r.get(7)?,
+        due_from_day: r.get(8)?,
+        due_to_day: r.get(9)?,
+        include_completed: r.get::<_, i64>(10)? != 0,
+        created_at: r.get(11)?,
+        modified_at: r.get(12)?,
+        deleted_at: r.get(13)?,
+    })
+}
+
+pub(super) fn filter(conn: &Connection, id: Id) -> Result<Option<Filter>> {
+    Ok(conn
+        .prepare_cached(&format!(
+            "SELECT {FILTER_COLUMNS} FROM filters WHERE id = ?1"
+        ))?
+        .query_row(params![id], filter_from_row)
+        .optional()?)
+}
+
+pub(super) fn filters(conn: &Connection, space_id: Id) -> Result<Vec<Filter>> {
+    Ok(conn
+        .prepare_cached(&format!(
+            "SELECT {FILTER_COLUMNS} FROM filters WHERE space_id = ?1 AND deleted_at IS NULL
+             ORDER BY position, id"
+        ))?
+        .query_map(params![space_id], filter_from_row)?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
 pub(super) fn task(conn: &Connection, id: Id) -> Result<Option<Task>> {
     let task = conn
         .prepare_cached(&format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?1"))?
@@ -207,9 +297,29 @@ pub(super) fn task(conn: &Connection, id: Id) -> Result<Option<Task>> {
     Ok(tasks.pop())
 }
 
-pub(super) fn tasks(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Result<Vec<Task>> {
+/// The `WHERE` predicate (over `tasks`) and its positional arguments.
+fn where_clause(
+    conn: &Connection,
+    space_id: Id,
+    filter: &TaskFilter,
+) -> Result<(String, Vec<Box<dyn rusqlite::ToSql>>)> {
     let mut where_sql = String::from("tasks.space_id = ?1");
     let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(space_id)];
+    // A collapsed subtree is one range of the outline: every key from the
+    // parent's key plus `/` up to the parent's key plus `0`.
+    for parent in &filter.collapsed {
+        let key: Option<String> = conn
+            .prepare_cached("SELECT sort_key FROM tasks WHERE id = ?1 AND space_id = ?2")?
+            .query_row(params![parent, space_id], |r| r.get(0))
+            .optional()?;
+        if let Some(key) = key {
+            args.push(Box::new(key));
+            where_sql.push_str(&format!(
+                " AND NOT (tasks.sort_key >= ?{n} || '/' AND tasks.sort_key < ?{n} || '0')",
+                n = args.len()
+            ));
+        }
+    }
     match filter.list {
         Some(None) => where_sql.push_str(" AND tasks.list_id IS NULL"),
         Some(Some(list)) => {
@@ -228,27 +338,165 @@ pub(super) fn tasks(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Res
         args.push(Box::new(to));
         where_sql.push_str(&format!(" AND tasks.due_at < ?{}", args.len()));
     }
-    if !filter.include_completed {
+    if let Some(tag) = filter.tag {
+        args.push(Box::new(tag));
+        where_sql.push_str(&format!(
+            " AND EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = tasks.id AND tt.tag_id = ?{})",
+            args.len()
+        ));
+    }
+    if filter.untagged {
+        where_sql
+            .push_str(" AND NOT EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = tasks.id)");
+    }
+    if let Some(priority) = filter.priority {
+        args.push(Box::new(priority as i64));
+        where_sql.push_str(&format!(" AND tasks.priority = ?{}", args.len()));
+    }
+    if let Some(status) = &filter.status {
+        args.push(Box::new(status.clone()));
+        where_sql.push_str(&format!(" AND tasks.status = ?{}", args.len()));
+    }
+    if filter.has_reminder {
+        where_sql.push_str(" AND tasks.reminder_at IS NOT NULL");
+    }
+    if filter.completed_only {
+        where_sql.push_str(" AND tasks.completed_at IS NOT NULL");
+    } else if !filter.include_completed {
         where_sql.push_str(" AND tasks.completed_at IS NULL");
     }
     if !filter.include_deleted {
         where_sql.push_str(" AND tasks.deleted_at IS NULL");
     }
-    let mut sql =
-        format!("SELECT {TASK_COLUMNS} FROM tasks WHERE {where_sql} ORDER BY position, id");
-    if filter.limit > 0 {
-        sql.push_str(&format!(" LIMIT {}", filter.limit));
+    Ok((where_sql, args))
+}
+
+/// Status names in use on open tasks: `open` first, then the rest by name.
+pub(super) fn statuses(conn: &Connection, space_id: Id) -> Result<Vec<String>> {
+    let mut names: Vec<String> = conn
+        .prepare_cached(
+            "SELECT DISTINCT status FROM tasks
+             WHERE space_id = ?1 AND completed_at IS NULL AND deleted_at IS NULL
+             ORDER BY status",
+        )?
+        .query_map(params![space_id], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    if let Some(i) = names.iter().position(|s| s == "open") {
+        names.remove(i);
+    }
+    names.insert(0, "open".into());
+    Ok(names)
+}
+
+/// How many tasks match, ignoring `offset` and `limit`.
+pub(super) fn count(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Result<usize> {
+    let (where_sql, args) = where_clause(conn, space_id, filter)?;
+    let sql = format!("SELECT count(*) FROM tasks WHERE {where_sql}");
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let n: i64 = stmt.query_row(rusqlite::params_from_iter(args.iter()), |r| r.get(0))?;
+    Ok(n as usize)
+}
+
+pub(super) fn tasks(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Result<Vec<Task>> {
+    Ok(task_rows(conn, space_id, filter)?
+        .into_iter()
+        .map(|r| r.task)
+        .collect())
+}
+
+/// The matching tasks in the filter's order, `offset` rows in and at most
+/// `limit` rows long, each with its outline depth.
+pub(super) fn task_rows(
+    conn: &Connection,
+    space_id: Id,
+    filter: &TaskFilter,
+) -> Result<Vec<TaskRow>> {
+    let (where_sql, args) = where_clause(conn, space_id, filter)?;
+    let order = match filter.order {
+        TaskOrder::Manual => "sort_key, id",
+        // A due range excludes undated tasks, so the order is the index's.
+        TaskOrder::DueThenManual if filter.due_between.is_some() => "due_at, sort_key, id",
+        TaskOrder::DueThenManual => "due_at IS NULL, due_at, sort_key, id",
+        TaskOrder::CompletedDesc => "completed_at DESC, id",
+    };
+    let mut sql = format!(
+        "SELECT {TASK_COLUMNS}, sort_key,
+            EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = tasks.id AND c.deleted_at IS NULL)
+         FROM tasks WHERE {where_sql} ORDER BY {order}"
+    );
+    if filter.limit > 0 || filter.offset > 0 {
+        let limit = if filter.limit > 0 {
+            filter.limit as i64
+        } else {
+            -1
+        };
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {}", filter.offset));
     }
     let mut stmt = conn.prepare_cached(&sql)?;
-    let mut tasks: Vec<Task> = stmt
-        .query_map(rusqlite::params_from_iter(args.iter()), task_from_row)?
+    let mut rows: Vec<(Task, String, bool)> = stmt
+        .query_map(rusqlite::params_from_iter(args.iter()), |r| {
+            Ok((
+                task_from_row(r)?,
+                r.get::<_, String>(17)?,
+                r.get::<_, i64>(18)? != 0,
+            ))
+        })?
         .collect::<rusqlite::Result<_>>()?;
-    if filter.limit > 0 && tasks.len() >= filter.limit {
-        fill_tags(conn, &mut tasks)?;
-    } else {
-        fill_tags_where(conn, &mut tasks, &where_sql, &args)?;
+    {
+        // A few rows take one indexed tag lookup each; only a large
+        // result is worth one join over every tag row the filter reaches.
+        let mut tasks: Vec<&mut Task> = rows.iter_mut().map(|(t, _, _)| t).collect();
+        if tasks.len() < 1_000 {
+            fill_tags_each(conn, &mut tasks)?;
+        } else {
+            fill_tags_where(conn, &mut tasks, &where_sql, &args)?;
+        }
     }
-    Ok(tasks)
+    let depths: Vec<u32> = if filter.order == TaskOrder::Manual {
+        visible_depths(&rows)
+    } else {
+        vec![0; rows.len()]
+    };
+    Ok(rows
+        .into_iter()
+        .zip(depths)
+        .map(|((task, _, has_subtasks), depth)| TaskRow {
+            task,
+            depth,
+            has_subtasks,
+        })
+        .collect())
+}
+
+/// Depths relative to what the listing shows. Rows come in outline order
+/// and each carries its materialized path, so a row's shown ancestors are
+/// exactly the rows above it whose path is a prefix of its own; a parent
+/// that is not in the listing (completed, filtered out) closes the gap.
+/// Ancestors of the first row may sit above the window and count as shown.
+fn visible_depths(rows: &[(Task, String, bool)]) -> Vec<u32> {
+    let mut stack: Vec<String> = Vec::new();
+    if let Some((_, first, _)) = rows.first() {
+        let mut prefix = String::new();
+        for part in first.split('/') {
+            if !prefix.is_empty() {
+                stack.push(prefix.clone());
+                prefix.push('/');
+            }
+            prefix.push_str(part);
+        }
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for (_, key, _) in rows {
+        while let Some(top) = stack.last() {
+            if key.len() > top.len() && key.starts_with(top) && key.as_bytes()[top.len()] == b'/' {
+                break;
+            }
+            stack.pop();
+        }
+        out.push(stack.len() as u32);
+        stack.push(key.clone());
+    }
+    out
 }
 
 /// Turn free text into an FTS5 query: each term is quoted and matched as a
@@ -300,6 +548,25 @@ pub(super) fn search(
     Ok(tasks)
 }
 
+pub(super) fn window_plan(conn: &Connection, space_id: Id) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    for sql in [
+        "SELECT count(*) FROM tasks WHERE tasks.space_id = ?1 AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL",
+        "SELECT id FROM tasks WHERE tasks.space_id = ?1 AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL ORDER BY sort_key, id LIMIT 10 OFFSET 5",
+        "SELECT count(*) FROM tasks WHERE tasks.space_id = ?1 AND tasks.list_id = ?1 AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL",
+        "SELECT id FROM tasks WHERE tasks.space_id = ?1 AND tasks.due_at >= 1 AND tasks.due_at < 5 AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL ORDER BY due_at, sort_key, id LIMIT 10",
+        "SELECT DISTINCT status FROM tasks WHERE space_id = ?1 AND completed_at IS NULL AND deleted_at IS NULL ORDER BY status",
+        "SELECT id FROM tasks WHERE tasks.space_id = ?1 AND tasks.reminder_at IS NOT NULL AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL ORDER BY sort_key, id",
+    ] {
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+        let rows: Vec<String> = stmt
+            .query_map(params![space_id], |r| r.get::<_, String>(3))?
+            .collect::<rusqlite::Result<_>>()?;
+        out.push(format!("{sql}\n    {}", rows.join("\n    ")));
+    }
+    Ok(out)
+}
+
 pub(super) fn search_plan(conn: &Connection) -> Result<Vec<String>> {
     let sql = format!("EXPLAIN QUERY PLAN {}", search_sql());
     let mut stmt = conn.prepare(&sql)?;
@@ -340,12 +607,20 @@ pub(super) fn space_state(conn: &Connection, space_id: Id) -> Result<SpaceState>
         .query_map(params![space_id], task_from_row)?
         .collect::<rusqlite::Result<_>>()?;
     let args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(space_id)];
-    fill_tags_where(conn, &mut tasks, "tasks.space_id = ?1", &args)?;
+    let mut refs: Vec<&mut Task> = tasks.iter_mut().collect();
+    fill_tags_where(conn, &mut refs, "tasks.space_id = ?1", &args)?;
+    let filters = conn
+        .prepare_cached(&format!(
+            "SELECT {FILTER_COLUMNS} FROM filters WHERE space_id = ?1 ORDER BY id"
+        ))?
+        .query_map(params![space_id], filter_from_row)?
+        .collect::<rusqlite::Result<_>>()?;
     Ok(SpaceState {
         space: space(conn, space_id)?,
         lists,
         tags,
         tasks,
+        filters,
     })
 }
 

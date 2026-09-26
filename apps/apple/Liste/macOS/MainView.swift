@@ -1,6 +1,6 @@
-// The main window: a sidebar of smart lists and lists, and the tasks of the
-// selected one. Scaffolding for the real UI; every value shown comes from
-// the core through the session.
+// The main window: sidebar, the list or board of the selected item, a
+// search field, and the inspector. Every value shown comes from the core
+// through the session.
 
 import ListeCore
 import ListeKit
@@ -8,100 +8,142 @@ import SwiftUI
 
 struct MainView: View {
     @Bindable var session: Session
+    @Bindable var ui: UIState
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $session.selection) {
-                Section {
-                    Label("Today", systemImage: "sun.max").tag(Selection.today)
-                    Label("Upcoming", systemImage: "calendar").tag(Selection.upcoming)
-                    Label("Inbox", systemImage: "tray").tag(Selection.inbox)
-                }
-                Section("Lists") {
-                    ForEach(session.lists, id: \.id) { list in
-                        Label(list.title, systemImage: "list.bullet").tag(Selection.list(id: list.id))
-                    }
-                }
-            }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 220)
+            Sidebar(session: session, ui: ui)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 220)
         } detail: {
-            TaskListView(session: session)
+            content
+                .toolbar { toolbar }
+                .navigationTitle(title)
+                .navigationSubtitle(subtitle)
         }
-        .navigationTitle(title)
+        .inspector(isPresented: $ui.showInspector) {
+            Inspector(session: session, ui: ui)
+                .inspectorColumnWidth(min: 260, ideal: 320)
+        }
+        .onChange(of: ui.searchFocusRequest) { _, _ in
+            if !session.selection.isSearch { session.beginSearch() }
+            searchFocused = true
+        }
+        .onChange(of: ui.newTaskRequest) { _, _ in
+            if let task = session.newTask() {
+                ui.selectedTaskId = task.id
+                ui.editingTaskId = task.id
+            }
+        }
+        .onChange(of: ui.searchText) { _, text in
+            if session.selection.isSearch { session.setSearch(text) }
+        }
+        .onExitCommand {
+            if session.selection.isSearch {
+                ui.searchText = ""
+                session.endSearch()
+            }
+        }
+        .onChange(of: ui.paletteRequest) { _, _ in ui.showPalette = true }
+        .sheet(isPresented: $ui.showPalette) {
+            CommandPalette(session: session, ui: ui, dismiss: { ui.showPalette = false }, runAction: runAction)
+        }
+        .sheet(isPresented: $ui.showFilterBuilder) {
+            FilterBuilder(session: session, dismiss: { ui.showFilterBuilder = false })
+        }
+        .preferredColorScheme(scheme)
+    }
+
+    private func runAction(_ action: String) {
+        switch action {
+        case "new-task": ui.newTaskRequest += 1
+        case "quick-capture": NotificationCenter.default.post(name: .quickCaptureRequested, object: nil)
+        case "search": ui.searchFocusRequest += 1
+        case "inspector": ui.showInspector.toggle()
+        case "list-view": ui.viewMode = .list
+        case "board-view": ui.viewMode = .board
+        case "undo": session.undo()
+        case "redo": session.redo()
+        case "complete":
+            if let task = session.find(ui.selectedTaskId) {
+                session.setCompleted(task, task.completedAt == nil)
+            }
+        case "delete":
+            if let task = session.find(ui.selectedTaskId) { session.delete(task) }
+        case "new-filter": ui.showFilterBuilder = true
+        case "settings": NotificationCenter.default.post(name: .settingsRequested, object: nil)
+        default: break
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch ui.viewMode {
+        case .list: TaskListView(session: session, ui: ui)
+        case .board: BoardView(session: session, ui: ui)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            Picker("View", selection: $ui.viewMode) {
+                Image(systemName: "list.bullet").tag(UIState.ViewMode.list).help("List (\u{2318}\u{21E7}1)")
+                Image(systemName: "rectangle.split.3x1").tag(UIState.ViewMode.board).help("Board (\u{2318}\u{21E7}2)")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+        ToolbarItem(placement: .automatic) {
+            TextField("Search", text: $ui.searchText)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 200)
+                .focused($searchFocused)
+                .onSubmit { searchFocused = false }
+                .onChange(of: searchFocused) { _, focused in
+                    if focused, !session.selection.isSearch { session.beginSearch() }
+                }
+                .accessibilityLabel("Search tasks")
+        }
+        ToolbarItem(placement: .automatic) {
+            Button { ui.newTaskRequest += 1 } label: { Label("New Task", systemImage: "plus") }
+                .help("New Task (\u{2318}N)")
+        }
+        ToolbarItem(placement: .automatic) {
+            Button { ui.showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
+                .help("Show Inspector (\u{2318}I)")
+        }
     }
 
     private var title: String {
         switch session.selection {
         case .today: "Today"
         case .upcoming: "Upcoming"
+        case .anytime: "Anytime"
+        case .completed: "Completed"
         case .inbox: "Inbox"
         case .list(let id): session.lists.first { $0.id == id }?.title ?? "List"
+        case .tag(let id): "#" + (session.tags.first { $0.id == id }?.name ?? "tag")
+        case .search(let q): q.isEmpty ? "Search" : "Search: \(q)"
+        case .filter(let id): session.filters.first { $0.id == id }?.name ?? "Filter"
+        }
+    }
+
+    private var subtitle: String {
+        let n = session.count
+        return n == 1 ? "1 task" : "\(n) tasks"
+    }
+
+    private var scheme: ColorScheme? {
+        switch Preferences.theme {
+        case "light": .light
+        case "dark": .dark
+        default: nil
         }
     }
 }
 
-struct TaskListView: View {
-    var session: Session
-
-    var body: some View {
-        Group {
-            if session.isLocked {
-                ContentUnavailableView("Locked", systemImage: "lock", description: Text("Unlock Liste to see your tasks."))
-            } else if session.tasks.isEmpty {
-                ContentUnavailableView("Nothing here", systemImage: "checkmark.circle", description: Text("Press Option-Space to capture a task."))
-            } else {
-                List(session.tasks, id: \.id) { task in
-                    TaskRow(task: task) { done in
-                        session.setCompleted(task, done)
-                    }
-                }
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if let error = session.lastError {
-                Text(error).font(.callout).foregroundStyle(.red).padding(8)
-            }
-        }
-    }
-}
-
-struct TaskRow: View {
-    let task: TaskItem
-    var onToggle: @MainActor @Sendable (Bool) -> Void
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Toggle(isOn: Binding(get: { task.completedAt != nil }, set: onToggle)) {
-                EmptyView()
-            }
-            .toggleStyle(.checkbox)
-            .labelsHidden()
-            .accessibilityLabel("Complete \(task.title)")
-            VStack(alignment: .leading, spacing: 2) {
-                Text(task.title.isEmpty ? "Untitled" : task.title)
-                    .strikethrough(task.completedAt != nil)
-                HStack(spacing: 8) {
-                    if let due = task.due {
-                        Label(due, systemImage: "calendar")
-                    }
-                    if let list = task.listTitle {
-                        Text("/\(list)")
-                    }
-                    ForEach(task.tags, id: \.self) { tag in
-                        Text("#\(tag)")
-                    }
-                    if task.priority != "none" {
-                        Text("!\(task.priority)")
-                    }
-                    if task.recurrence != nil {
-                        Image(systemName: "repeat")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(.vertical, 2)
-    }
+extension Notification.Name {
+    static let quickCaptureRequested = Notification.Name("liste.quickCapture")
+    static let settingsRequested = Notification.Name("liste.settings")
 }

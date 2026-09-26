@@ -28,6 +28,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Cmd {
     /// Capture a task from a natural-language string.
     Capture {
@@ -75,6 +76,15 @@ enum Cmd {
         add_tags: Vec<String>,
         #[arg(long = "untag")]
         remove_tags: Vec<String>,
+        /// A status name, e.g. open, doing, done.
+        #[arg(long)]
+        status: Option<String>,
+        /// Parent task id; an empty string makes the task top-level.
+        #[arg(long)]
+        parent: Option<String>,
+        /// Reminder as natural-language time; an empty string clears it.
+        #[arg(long)]
+        reminder: Option<String>,
     },
     /// The lists in the space.
     Lists,
@@ -225,6 +235,9 @@ fn execute(client: &mut Client, command: Cmd) -> Result<Output, Error> {
             list,
             add_tags,
             remove_tags,
+            status,
+            parent,
+            reminder,
         } => Output::Task(client.update(
             id,
             TaskPatch {
@@ -235,6 +248,9 @@ fn execute(client: &mut Client, command: Cmd) -> Result<Output, Error> {
                 list,
                 add_tags,
                 remove_tags,
+                status,
+                parent,
+                reminder,
             },
         )?),
         Cmd::Lists => Output::Lists(client.lists()?),

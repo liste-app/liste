@@ -72,6 +72,10 @@ bindings-swift:
         generate --library target/release/libliste_bindings.dylib \
         --language swift --out-dir bindings/generated/swift
 
+# Regenerate the platform token files from design/tokens.json.
+tokens:
+    python3 design/generate.py
+
 # Build the core for macOS, generate the Swift bindings, and package the
 # XCFramework the Xcode project links.
 apple-bindings:

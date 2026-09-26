@@ -23,8 +23,11 @@ use crate::hlc::Hlc;
 use crate::ids::Id;
 use crate::model::{EntityType, Field, Value, ValueType};
 
-/// The op format version written by this build.
-pub const SCHEMA_VERSION: u32 = 1;
+/// The highest op format version this build writes and understands.
+/// Version 2 added saved filters. An op carries the lowest version that
+/// covers its entity kind and field, so an older client skips only what it
+/// cannot represent and keeps applying everything else.
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// One change to one field of one entity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,7 +88,18 @@ impl Op {
 
     /// Whether this build can apply the op's mutation.
     pub fn is_understood(&self) -> bool {
-        self.schema_version <= SCHEMA_VERSION && !matches!(self.mutation, Mutation::Unknown { .. })
+        self.schema_version <= SCHEMA_VERSION
+            && !matches!(self.mutation, Mutation::Unknown { .. })
+            && self.entity_type != EntityType::Unknown
+    }
+
+    /// The lowest format version a reader needs to apply this change.
+    pub fn required_schema_version(entity_type: EntityType, mutation: &Mutation) -> u32 {
+        let field = match mutation {
+            Mutation::Set { field, .. } => field.schema_version(),
+            _ => 1,
+        };
+        entity_type.schema_version().max(field).min(SCHEMA_VERSION)
     }
 }
 
@@ -253,6 +267,31 @@ mod tests {
         );
         assert_eq!(String::from_utf8(op.encode()).unwrap(), expected);
         assert_eq!(Op::decode(expected.as_bytes()).unwrap(), op);
+    }
+
+    #[test]
+    fn required_version_is_the_lowest_that_covers_the_change() {
+        let set = |field| Mutation::Set {
+            field,
+            value: Value::Null,
+        };
+        assert_eq!(
+            Op::required_schema_version(EntityType::Task, &set(Field::DueAt)),
+            1
+        );
+        assert_eq!(
+            Op::required_schema_version(EntityType::Filter, &Mutation::Delete),
+            2
+        );
+        assert_eq!(
+            Op::required_schema_version(EntityType::Filter, &set(Field::Name)),
+            2
+        );
+        assert_eq!(
+            Op::required_schema_version(EntityType::Task, &set(Field::TagId)),
+            2,
+            "a new field on an old kind still needs the new version"
+        );
     }
 
     #[test]

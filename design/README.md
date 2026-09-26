@@ -4,4 +4,4 @@ Shared design tokens: colors, spacing, radii, and the type scale. Tokens are the
 
 Liste has its own design language that adapts to each platform's conventions. Share tokens, not component implementations; what must not drift is behavior, not pixels (Section 17 of `docs/ARCHITECTURE.md`).
 
-`tokens/` is empty until the first token set is defined.
+`tokens.json` is the source. `generate.py` (or `just tokens`) emits `apps/apple/ListeKit/Sources/ListeKit/Tokens.swift` and `apps/web/src/lib/tokens.css`; both generated files are committed so a change to a token is visible in review on every platform at once.

@@ -116,8 +116,18 @@ pub(crate) struct Inner {
     pub(crate) device_id: Id,
     pub(crate) space_id: Id,
     pub(crate) tz: TimeZone,
+    /// Counts answered since the store last changed, by filter. A list
+    /// asks for its count on every view switch; the store rarely moves
+    /// between two of them.
+    pub(crate) counts: Mutex<CountCache>,
     shutdown: AtomicBool,
     _lock: StoreLock,
+}
+
+#[derive(Default)]
+pub(crate) struct CountCache {
+    pub(crate) generation: u64,
+    pub(crate) by_filter: std::collections::HashMap<(Id, crate::store::TaskFilter), usize>,
 }
 
 /// A running host. Dropping it shuts it down.
@@ -159,6 +169,7 @@ impl Host {
             device_id: identity.device_id,
             space_id: identity.space_id,
             tz,
+            counts: Mutex::new(CountCache::default()),
             shutdown: AtomicBool::new(false),
             _lock: lock,
         });

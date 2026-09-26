@@ -22,6 +22,7 @@ mod native {
 
     use liste_core::host::{Host, HostConfig, HostError};
     use liste_core::parse::Locale;
+    use liste_ipc::protocol::{DebugRequest, FilterDefinition, FilterView, TagView, TaskQuery};
     use liste_ipc::protocol::{IpcError, Request, Response};
     use liste_ipc::{Endpoint, ListView, PreviewView, SpanView, TaskView};
 
@@ -72,9 +73,15 @@ mod native {
         /// The due date rendered in the host's zone, for display.
         pub due: Option<String>,
         pub due_all_day: bool,
+        pub reminder_at: Option<i64>,
         pub priority: String,
         pub status: String,
         pub completed_at: Option<i64>,
+        pub parent_id: Option<String>,
+        /// Indentation under the rows above it in the same listing.
+        pub depth: u32,
+        /// Whether any live task has this one as its parent.
+        pub has_subtasks: bool,
         pub tags: Vec<String>,
         pub recurrence: Option<String>,
         pub created_at: i64,
@@ -92,9 +99,13 @@ mod native {
                 due_at: t.due_at,
                 due: t.due,
                 due_all_day: t.due_all_day,
+                reminder_at: t.reminder_at,
                 priority: t.priority,
                 status: t.status,
                 completed_at: t.completed_at,
+                parent_id: t.parent_id.map(|p| p.to_string()),
+                depth: t.depth,
+                has_subtasks: t.has_subtasks,
                 tags: t.tags,
                 recurrence: t.recurrence,
                 created_at: t.created_at,
@@ -115,6 +126,162 @@ mod native {
                 id: l.id.to_string(),
                 title: l.title,
             }
+        }
+    }
+
+    #[derive(Debug, Clone, uniffi::Record)]
+    pub struct Tag {
+        pub id: String,
+        pub name: String,
+    }
+
+    impl From<TagView> for Tag {
+        fn from(t: TagView) -> Self {
+            Tag {
+                id: t.id.to_string(),
+                name: t.name,
+            }
+        }
+    }
+
+    /// A saved filter (Section 5): an entity like a list, so it syncs and
+    /// undoes like one. Absent criteria do not filter; the due window is
+    /// whole days from today.
+    #[derive(Debug, Clone, uniffi::Record)]
+    pub struct SavedFilter {
+        pub id: String,
+        pub name: String,
+        pub definition: FilterCriteria,
+    }
+
+    /// What a saved filter selects.
+    #[derive(Debug, Clone, Default, uniffi::Record)]
+    pub struct FilterCriteria {
+        #[uniffi(default = None)]
+        pub list_id: Option<String>,
+        #[uniffi(default = None)]
+        pub tag_id: Option<String>,
+        #[uniffi(default = None)]
+        pub priority: Option<String>,
+        #[uniffi(default = None)]
+        pub status: Option<String>,
+        #[uniffi(default = None)]
+        pub due_from_day: Option<i64>,
+        #[uniffi(default = None)]
+        pub due_to_day: Option<i64>,
+        #[uniffi(default = false)]
+        pub include_completed: bool,
+    }
+
+    impl FilterCriteria {
+        fn into_ipc(self) -> Result<FilterDefinition, ListeError> {
+            Ok(FilterDefinition {
+                list_id: self.list_id.as_deref().map(uuid).transpose()?,
+                tag_id: self.tag_id.as_deref().map(uuid).transpose()?,
+                priority: self.priority,
+                status: self.status,
+                due_from_day: self.due_from_day,
+                due_to_day: self.due_to_day,
+                include_completed: self.include_completed,
+            })
+        }
+    }
+
+    impl From<FilterView> for SavedFilter {
+        fn from(f: FilterView) -> Self {
+            SavedFilter {
+                id: f.id.to_string(),
+                name: f.name,
+                definition: FilterCriteria {
+                    list_id: f.definition.list_id.map(|l| l.to_string()),
+                    tag_id: f.definition.tag_id.map(|t| t.to_string()),
+                    priority: f.definition.priority,
+                    status: f.definition.status,
+                    due_from_day: f.definition.due_from_day,
+                    due_to_day: f.definition.due_to_day,
+                    include_completed: f.definition.include_completed,
+                },
+            }
+        }
+    }
+
+    /// A filter over tasks; absent fields do not filter. `order` is
+    /// `manual`, `due`, or `completed`. `due_from_day` and `due_to_day`
+    /// are whole days from today in the host's zone (today is
+    /// `due_to_day: 1`, overdue `due_to_day: 0`), so the app never
+    /// computes a day boundary. `offset` and `limit` pick a window.
+    #[derive(Debug, Clone, Default, uniffi::Record)]
+    pub struct Query {
+        /// A saved filter's criteria, evaluated by the core; the other
+        /// fields narrow it.
+        #[uniffi(default = None)]
+        pub filter_id: Option<String>,
+        #[uniffi(default = None)]
+        pub list_id: Option<String>,
+        #[uniffi(default = false)]
+        pub inbox: bool,
+        #[uniffi(default = None)]
+        pub tag_id: Option<String>,
+        #[uniffi(default = false)]
+        pub untagged: bool,
+        #[uniffi(default = None)]
+        pub parent_id: Option<String>,
+        #[uniffi(default = None)]
+        pub priority: Option<String>,
+        #[uniffi(default = None)]
+        pub status: Option<String>,
+        #[uniffi(default = None)]
+        pub due_from: Option<i64>,
+        #[uniffi(default = None)]
+        pub due_to: Option<i64>,
+        #[uniffi(default = None)]
+        pub due_from_day: Option<i64>,
+        #[uniffi(default = None)]
+        pub due_to_day: Option<i64>,
+        #[uniffi(default = false)]
+        pub has_reminder: bool,
+        #[uniffi(default = false)]
+        pub include_completed: bool,
+        #[uniffi(default = false)]
+        pub completed_only: bool,
+        /// Tasks whose subtasks the view has collapsed.
+        #[uniffi(default = [])]
+        pub collapsed: Vec<String>,
+        #[uniffi(default = None)]
+        pub order: Option<String>,
+        #[uniffi(default = 0)]
+        pub offset: u32,
+        #[uniffi(default = 0)]
+        pub limit: u32,
+    }
+
+    impl Query {
+        fn into_ipc(self) -> Result<TaskQuery, ListeError> {
+            Ok(TaskQuery {
+                filter_id: self.filter_id.as_deref().map(uuid).transpose()?,
+                list_id: self.list_id.as_deref().map(uuid).transpose()?,
+                inbox: self.inbox,
+                tag_id: self.tag_id.as_deref().map(uuid).transpose()?,
+                untagged: self.untagged,
+                parent_id: self.parent_id.as_deref().map(uuid).transpose()?,
+                priority: self.priority,
+                status: self.status,
+                due_from: self.due_from,
+                due_to: self.due_to,
+                due_from_day: self.due_from_day,
+                due_to_day: self.due_to_day,
+                has_reminder: self.has_reminder,
+                include_completed: self.include_completed,
+                completed_only: self.completed_only,
+                collapsed: self
+                    .collapsed
+                    .iter()
+                    .map(|c| uuid(c))
+                    .collect::<Result<Vec<_>, _>>()?,
+                order: self.order,
+                offset: self.offset as usize,
+                limit: self.limit as usize,
+            })
         }
     }
 
@@ -179,13 +346,29 @@ mod native {
     /// name and an empty string moves the task to the inbox.
     #[derive(Debug, Clone, Default, uniffi::Record)]
     pub struct TaskPatch {
+        #[uniffi(default = None)]
         pub title: Option<String>,
+        #[uniffi(default = None)]
         pub notes: Option<String>,
+        #[uniffi(default = None)]
         pub due: Option<String>,
+        #[uniffi(default = None)]
         pub priority: Option<String>,
+        #[uniffi(default = None)]
         pub list: Option<String>,
+        #[uniffi(default = [])]
         pub add_tags: Vec<String>,
+        #[uniffi(default = [])]
         pub remove_tags: Vec<String>,
+        /// A status name for kanban columns.
+        #[uniffi(default = None)]
+        pub status: Option<String>,
+        /// A parent task id; an empty string makes the task top-level.
+        #[uniffi(default = None)]
+        pub parent: Option<String>,
+        /// A reminder as natural-language time; an empty string clears it.
+        #[uniffi(default = None)]
+        pub reminder: Option<String>,
     }
 
     #[derive(Debug, Clone, uniffi::Record)]
@@ -395,8 +578,153 @@ mod native {
                     list: patch.list,
                     add_tags: patch.add_tags,
                     remove_tags: patch.remove_tags,
+                    status: patch.status,
+                    parent: patch.parent,
+                    reminder: patch.reminder,
                 },
             })?)
+        }
+
+        /// A window of the tasks matching the query, in its order.
+        pub fn query(&self, query: Query) -> Result<Vec<TaskItem>, ListeError> {
+            tasks(self.handle(Request::Query(query.into_ipc()?))?)
+        }
+
+        /// How many tasks match the query, ignoring its window.
+        pub fn count(&self, query: Query) -> Result<u32, ListeError> {
+            match self.handle(Request::Count(query.into_ipc()?))? {
+                Response::Count { total } => Ok(total.min(u32::MAX as usize) as u32),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Every status name in use, `open` first.
+        pub fn statuses(&self) -> Result<Vec<String>, ListeError> {
+            match self.handle(Request::Statuses)? {
+                Response::Statuses(s) => Ok(s),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Move a task in manual order to sit after `after` and before
+        /// `before`; either may be absent for an end of the list.
+        pub fn reorder(
+            &self,
+            id: String,
+            after: Option<String>,
+            before: Option<String>,
+        ) -> Result<TaskItem, ListeError> {
+            task(self.handle(Request::Reorder {
+                id: uuid(&id)?,
+                after: after.as_deref().map(uuid).transpose()?,
+                before: before.as_deref().map(uuid).transpose()?,
+            })?)
+        }
+
+        /// Tombstone a task. Undo restores it.
+        pub fn delete(&self, id: String) -> Result<(), ListeError> {
+            self.handle(Request::Delete { id: uuid(&id)? })?;
+            Ok(())
+        }
+
+        pub fn tags(&self) -> Result<Vec<Tag>, ListeError> {
+            match self.handle(Request::Tags)? {
+                Response::Tags(t) => Ok(t.into_iter().map(Into::into).collect()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        pub fn create_list(&self, title: String) -> Result<TaskList, ListeError> {
+            match self.handle(Request::CreateList { title })? {
+                Response::List(l) => Ok(l.into()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Rename a list and/or move it between two neighbours.
+        pub fn update_list(
+            &self,
+            id: String,
+            title: Option<String>,
+            after: Option<String>,
+            before: Option<String>,
+        ) -> Result<TaskList, ListeError> {
+            match self.handle(Request::UpdateList {
+                id: uuid(&id)?,
+                title,
+                after: after.as_deref().map(uuid).transpose()?,
+                before: before.as_deref().map(uuid).transpose()?,
+            })? {
+                Response::List(l) => Ok(l.into()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Delete a list; its tasks move to the inbox.
+        pub fn delete_list(&self, id: String) -> Result<(), ListeError> {
+            self.handle(Request::DeleteList { id: uuid(&id)? })?;
+            Ok(())
+        }
+
+        /// Saved filters in manual order.
+        pub fn filters(&self) -> Result<Vec<SavedFilter>, ListeError> {
+            match self.handle(Request::Filters)? {
+                Response::Filters(f) => Ok(f.into_iter().map(Into::into).collect()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        pub fn create_filter(
+            &self,
+            name: String,
+            definition: FilterCriteria,
+        ) -> Result<SavedFilter, ListeError> {
+            match self.handle(Request::CreateFilter {
+                name,
+                definition: definition.into_ipc()?,
+            })? {
+                Response::Filter(f) => Ok(f.into()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Rename, redefine, or move a saved filter; absent parts are kept.
+        pub fn update_filter(
+            &self,
+            id: String,
+            name: Option<String>,
+            definition: Option<FilterCriteria>,
+            after: Option<String>,
+            before: Option<String>,
+        ) -> Result<SavedFilter, ListeError> {
+            match self.handle(Request::UpdateFilter {
+                id: uuid(&id)?,
+                name,
+                definition: definition.map(FilterCriteria::into_ipc).transpose()?,
+                after: after.as_deref().map(uuid).transpose()?,
+                before: before.as_deref().map(uuid).transpose()?,
+            })? {
+                Response::Filter(f) => Ok(f.into()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Delete a saved filter. Undo restores it.
+        pub fn delete_filter(&self, id: String) -> Result<(), ListeError> {
+            self.handle(Request::DeleteFilter { id: uuid(&id)? })?;
+            Ok(())
+        }
+
+        /// Fill the store with the fixture, for benches and the acceptance
+        /// driver. Returns the number of tasks created.
+        pub fn populate_fixture(&self, tasks: u32, seed: u64) -> Result<u32, ListeError> {
+            match self.handle(Request::Debug(DebugRequest::Fixture {
+                tasks: tasks as usize,
+                seed,
+            }))? {
+                Response::Fixture { tasks, .. } => Ok(tasks as u32),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
         }
 
         pub fn complete(&self, id: String) -> Result<TaskItem, ListeError> {
