@@ -11,7 +11,6 @@ struct Sidebar: View {
     @State private var renameText = ""
     @State private var newListText = ""
     @State private var showNewList = false
-    @State private var filters = Preferences.savedFilters
 
     var body: some View {
         List(selection: $session.selection) {
@@ -23,9 +22,6 @@ struct Sidebar: View {
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) { newListBar }
         .onChange(of: ui.newListRequest) { _, _ in showNewList = true }
-        .onReceive(NotificationCenter.default.publisher(for: .savedFiltersChanged)) { _ in
-            filters = Preferences.savedFilters
-        }
         .sheet(item: $renaming) { list in renameSheet(list) }
     }
 
@@ -109,24 +105,34 @@ struct Sidebar: View {
         }
     }
 
+    /// Saved filters come from the core and sync like lists.
     @ViewBuilder
     private var filtersSection: some View {
-        if !filters.isEmpty {
+        if !session.filters.isEmpty {
             Section("Filters") {
-                ForEach(filters) { filter in
+                ForEach(session.filters) { filter in
                     Label(filter.name, systemImage: "line.3.horizontal.decrease.circle")
-                        .tag(Selection.filter(filter))
+                        .tag(Selection.filter(id: filter.id))
                         .contextMenu {
-                            Button("Delete Filter", role: .destructive) { deleteFilter(filter) }
+                            Button("Delete Filter", role: .destructive) { session.deleteFilter(filter) }
                         }
                 }
+                .onMove(perform: moveFilters)
             }
         }
     }
 
-    private func deleteFilter(_ filter: SavedFilter) {
-        filters.removeAll { $0.id == filter.id }
-        Preferences.savedFilters = filters
+    private func moveFilters(from source: IndexSet, to destination: Int) {
+        guard let index = source.first else { return }
+        let filters = session.filters
+        let moved = filters[index]
+        var order = filters
+        order.remove(at: index)
+        let target = destination > index ? destination - 1 : destination
+        order.insert(moved, at: target)
+        let after = target > 0 ? order[target - 1] : nil
+        let before = target + 1 < order.count ? order[target + 1] : nil
+        session.reorderFilter(moved, after: after, before: before)
     }
 
     private func row(_ title: String, _ icon: String, _ selection: Selection, badge: Int = 0) -> some View {
@@ -158,8 +164,4 @@ struct Sidebar: View {
         let before = target + 1 < order.count ? order[target + 1] : nil
         session.reorderList(moved, after: after, before: before)
     }
-}
-
-extension Notification.Name {
-    static let savedFiltersChanged = Notification.Name("liste.savedFiltersChanged")
 }

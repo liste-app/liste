@@ -146,48 +146,65 @@ struct CommandPalette: View {
     }
 }
 
-/// The saved-filter builder: list, tag, priority, due range, status.
+/// The saved-filter builder: list, tag, priority, due range, status. The
+/// filter is saved in the core and evaluated there; the due choices are
+/// whole days from today.
 struct FilterBuilder: View {
     @Bindable var session: Session
     var dismiss: () -> Void
-    @State private var filter = SavedFilter(name: "")
+    @State private var name = ""
+    @State private var listId = ""
+    @State private var tagId = ""
+    @State private var priority = ""
+    @State private var status = ""
+    @State private var includeCompleted = false
+    /// 0: any; -1: overdue; n: the next n days.
+    @State private var dueChoice = 0
 
     var body: some View {
         Form {
-            TextField("Name", text: $filter.name)
-            Picker("List", selection: Binding(get: { filter.listId ?? "" }, set: { filter.listId = $0.isEmpty ? nil : $0 })) {
+            TextField("Name", text: $name)
+            Picker("List", selection: $listId) {
                 Text("Any").tag("")
                 ForEach(session.lists, id: \.id) { Text($0.title).tag($0.id) }
             }
-            Picker("Tag", selection: Binding(get: { filter.tagId ?? "" }, set: { filter.tagId = $0.isEmpty ? nil : $0 })) {
+            Picker("Tag", selection: $tagId) {
                 Text("Any").tag("")
                 ForEach(session.tags, id: \.id) { Text("#\($0.name)").tag($0.id) }
             }
-            Picker("Priority", selection: Binding(get: { filter.priority ?? "" }, set: { filter.priority = $0.isEmpty ? nil : $0 })) {
+            Picker("Priority", selection: $priority) {
                 Text("Any").tag("")
                 ForEach(["high", "medium", "low", "none"], id: \.self) { Text($0.capitalized).tag($0) }
             }
-            Picker("Due", selection: $filter.dueWithinDays) {
+            Picker("Due", selection: $dueChoice) {
                 Text("Any").tag(0)
                 Text("Overdue").tag(-1)
                 Text("Next 7 days").tag(7)
                 Text("Next 30 days").tag(30)
             }
-            Picker("Status", selection: Binding(get: { filter.status ?? "" }, set: { filter.status = $0.isEmpty ? nil : $0 })) {
+            Picker("Status", selection: $status) {
                 Text("Any").tag("")
                 ForEach(["open", "doing", "done"], id: \.self) { Text($0.capitalized).tag($0) }
             }
-            Toggle("Include completed", isOn: $filter.includeCompleted)
+            Toggle("Include completed", isOn: $includeCompleted)
             HStack {
                 Spacer()
                 Button("Cancel", action: dismiss).keyboardShortcut(.cancelAction)
                 Button("Save") {
-                    guard !filter.name.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                    var all = Preferences.savedFilters
-                    all.append(filter)
-                    Preferences.savedFilters = all
-                    NotificationCenter.default.post(name: .savedFiltersChanged, object: nil)
-                    session.selection = .filter(filter)
+                    let trimmed = name.trimmingCharacters(in: .whitespaces)
+                    guard !trimmed.isEmpty else { return }
+                    let (from, to): (Int64?, Int64?) = switch dueChoice {
+                    case 0: (nil, nil)
+                    case -1: (nil, 0)
+                    default: (0, Int64(dueChoice))
+                    }
+                    let criteria = FilterCriteria(
+                        listId: listId.isEmpty ? nil : listId, tagId: tagId.isEmpty ? nil : tagId,
+                        priority: priority.isEmpty ? nil : priority, status: status.isEmpty ? nil : status,
+                        dueFromDay: from, dueToDay: to, includeCompleted: includeCompleted)
+                    if let filter = session.createFilter(trimmed, criteria) {
+                        session.selection = .filter(id: filter.id)
+                    }
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
