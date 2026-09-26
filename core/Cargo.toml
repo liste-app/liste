@@ -24,6 +24,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+proptest = "1.11.0"
+
 # On the web the core runs in a dedicated worker and stores the database in
 # OPFS through the sahpool VFS only (Section 10). Browsers without OPFS are
 # unsupported for persistence; no IndexedDB VFS is used or reintroduced.
@@ -37,3 +40,11 @@ sqlite-wasm-vfs = "0.2"
 getrandom = { version = "0.4", features = ["wasm_js"] }
 # uuid needs an explicit randomness and clock source on this target too.
 uuid = { workspace = true, features = ["js"] }
+
+[[bench]]
+name = "insert"
+harness = false
+
+[[bench]]
+name = "search"
+harness = false

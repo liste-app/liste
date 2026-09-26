@@ -36,6 +36,12 @@ lint:
 fmt:
     cargo fmt --all
 
+# Run the core benches against the 50,000-task fixture and print numbers.
+# Set LISTE_BENCH_TASKS to use a smaller fixture.
+bench:
+    cargo bench -p liste-core --bench insert
+    cargo bench -p liste-core --bench search
+
 # Run the CLI. Example: just cli capture "call mom tomorrow 5pm"
 cli *ARGS:
     cargo run -q -p liste-cli -- {{ARGS}}

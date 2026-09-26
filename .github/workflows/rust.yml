@@ -4,7 +4,9 @@
 # filters by path inside the workflow: when nothing Rust-related changed the
 # jobs are skipped, which GitHub treats as passing. The core suite in
 # core/tests/ therefore runs on every change to the core, the IPC crate, or
-# the bindings (Section 15 and Section 16 of docs/ARCHITECTURE.md).
+# the bindings (Section 15 and Section 16 of docs/ARCHITECTURE.md). The
+# benches run in release mode against the 50,000-task fixture and fail on
+# a threshold regression.
 
 name: Rust
 
@@ -69,3 +71,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace --no-fail-fast
+
+  bench:
+    name: Bench
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo bench -p liste-core --bench insert
+      - run: cargo bench -p liste-core --bench search

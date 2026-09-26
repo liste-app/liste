@@ -6,20 +6,39 @@
 //! recurrence, undo, importers, and the desktop host. The native apps, the
 //! web app, the CLI, and the MCP server are thin consumers of this crate.
 //!
+//! The public surface clients use is small:
+//! - [`store::Store`]: open a device's database; [`Store::apply`] any op,
+//!   [`Store::commit`] local ops, [`Store::undo`] and [`Store::redo`],
+//!   query methods and [`Store::search`], [`Store::snapshot`] and
+//!   [`Store::restore`], and the push/pull plumbing the sync runner uses.
+//! - [`op::Op`] and [`op::Mutation`]: the one change format, built with
+//!   [`Store::op`].
+//! - [`model`]: the entities and fields, each with an explicit merge class.
+//! - [`ids::Id`] and [`hlc::Hlc`]: identifiers and the clock that orders ops.
+//!
 //! See `docs/ARCHITECTURE.md` for the design and decision record.
+//!
+//! [`Store::apply`]: store::Store::apply
+//! [`Store::commit`]: store::Store::commit
+//! [`Store::undo`]: store::Store::undo
+//! [`Store::redo`]: store::Store::redo
+//! [`Store::search`]: store::Store::search
+//! [`Store::snapshot`]: store::Store::snapshot
+//! [`Store::restore`]: store::Store::restore
+//! [`Store::op`]: store::Store::op
 
 pub mod crypto;
+pub mod fractional;
+pub mod hlc;
 pub mod host;
+pub mod ids;
 pub mod importers;
 pub mod model;
+pub mod op;
 pub mod parse;
 pub mod recurrence;
-pub mod search;
 pub mod store;
 pub mod sync;
 pub mod undo;
 
-/// Version of the op format written by this build. Every op carries its
-/// `schema_version`; clients must apply ops from older versions forever
-/// (Section 6, schema evolution).
-pub const SCHEMA_VERSION: u32 = 1;
+pub use op::SCHEMA_VERSION;
