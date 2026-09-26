@@ -131,6 +131,9 @@ struct Board: NSViewRepresentable {
 
         func apply(columns: [BoardColumn], selected: String?, generation: Int) {
             guard let container else { return }
+            // Fresh columns take their rows and selection now, whatever the
+            // generation says; existing ones only when the store moved.
+            var fresh: [ColumnView] = []
             if views.map(\.column.key) != columns.map(\.key) {
                 for view in views { view.removeFromSuperview() }
                 views = columns.map { column in
@@ -138,17 +141,21 @@ struct Board: NSViewRepresentable {
                     container.addSubview(view)
                     return view
                 }
+                fresh = views
                 container.needsLayout = true
+                container.layoutSubtreeIfNeeded()
             } else {
                 for (view, column) in zip(views, columns) { view.column = column }
             }
-            if generation != self.generation {
-                self.generation = generation
-                for view in views { view.rowsChanged() }
+            let moved = generation != self.generation
+            self.generation = generation
+            for view in views where moved || fresh.contains(where: { $0 === view }) {
+                view.rowsChanged()
             }
-            if selected != self.selected {
-                self.selected = selected
-                for view in views { view.syncSelection(to: selected) }
+            let reselect = selected != self.selected
+            self.selected = selected
+            for view in views where reselect || fresh.contains(where: { $0 === view }) {
+                view.syncSelection(to: selected)
             }
         }
 
