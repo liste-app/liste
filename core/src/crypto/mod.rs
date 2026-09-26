@@ -54,6 +54,7 @@ pub mod envelope;
 pub mod keyring;
 pub mod keys;
 pub mod keystore;
+pub mod onboarding;
 pub mod primitives;
 pub mod recovery;
 pub mod wrap;
@@ -62,6 +63,7 @@ pub use envelope::{EncryptedOp, EncryptedSnapshot, OVERHEAD, op_aad, snapshot_aa
 pub use keyring::{AccountMaterial, Keyring};
 pub use keys::{RecoveryKey, RootKey, SpaceKey, UserKeyPair, UserPublicKeys};
 pub use keystore::{KeyStore, KeyStoreError, MemoryKeyStore};
+pub use onboarding::{ApprovalGrant, ApprovalRequest, NewDeviceApproval, ShortCode};
 pub use recovery::RecoveryKeyError;
 pub use wrap::{Wrapped, WrappedSpaceKey};
 
