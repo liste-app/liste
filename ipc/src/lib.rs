@@ -9,6 +9,7 @@
 //! the authentication boundary.
 
 pub mod client;
+pub mod launch;
 pub mod paths;
 pub mod protocol;
 pub mod transport;

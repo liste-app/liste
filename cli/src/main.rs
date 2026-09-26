@@ -11,7 +11,7 @@
 
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use liste_ipc::{Client, ClientError, DebugRequest, Endpoint, Response, TaskPatch, TaskView};
@@ -430,31 +430,10 @@ fn task_line(t: &TaskView) -> String {
     line
 }
 
-/// Start a host in the background: the desktop app if installed, else
-/// this binary's `daemon`. Windows is a stub until the Windows app exists.
+/// Start a host in the background with this binary as the daemon.
 fn launch_host() -> io::Result<()> {
-    if cfg!(target_os = "macos") && std::path::Path::new("/Applications/Liste.app").exists() {
-        return Command::new("open")
-            .args(["-g", "-j", "-a", "Liste", "--args", "--background"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map(|_| ());
-    }
-    if cfg!(windows) {
-        return Err(io::Error::other(
-            "auto-start is not implemented on Windows yet",
-        ));
-    }
     let exe = std::env::current_exe()?;
-    Command::new(exe)
-        .arg("daemon")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
+    liste_ipc::launch::launch_host(&exe)
 }
 
 fn daemon(data_dir: Option<PathBuf>, socket: Option<PathBuf>, locked: bool) -> Result<(), Error> {
