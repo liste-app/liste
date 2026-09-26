@@ -57,3 +57,7 @@ harness = false
 [[bench]]
 name = "crypto"
 harness = false
+
+[[bench]]
+name = "parse"
+harness = false
