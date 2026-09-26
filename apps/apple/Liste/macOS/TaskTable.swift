@@ -484,11 +484,24 @@ final class TaskCell: NSTableCellView, NSTextFieldDelegate {
         var isCollapsed: Bool
     }
     private var shown: Shown?
+    /// A row in a list, or a card on the board: a card draws its own
+    /// surface inset from the row and an accent border when selected.
+    enum Style {
+        case row
+        case card
+    }
+    let style: Style
+    var isHighlighted = false {
+        didSet { if isHighlighted != oldValue { needsDisplay = true } }
+    }
+    /// The row height a card needs: a row plus the gap between cards.
+    static let cardRowHeight = Tokens.Size.row + Tokens.Space.xs
 
     private static let expanded = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Collapse subtasks")
     private static let collapsedImage = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Expand subtasks")
 
-    init(identifier: NSUserInterfaceItemIdentifier) {
+    init(identifier: NSUserInterfaceItemIdentifier, style: Style = .row) {
+        self.style = style
         super.init(frame: .zero)
         self.identifier = identifier
         disclosure.isBordered = false
@@ -606,29 +619,39 @@ final class TaskCell: NSTableCellView, NSTextFieldDelegate {
         return f.ascender - f.descender + f.leading
     }
 
+    /// Where the content goes: the whole row, or the card inside it.
+    private var contentRect: NSRect {
+        switch style {
+        case .row: bounds
+        case .card: bounds.insetBy(dx: Tokens.Space.xs, dy: Tokens.Space.xxs)
+        }
+    }
+
     private var textX: CGFloat {
-        var x = Tokens.Space.sm
+        var x = contentRect.minX + Tokens.Space.sm
         if hasDayColumn { x += Tokens.Size.dayColumn + Tokens.Space.sm }
         x += CGFloat(depth) * Tokens.Space.xl
         return x + Tokens.Space.lg + Tokens.Space.xs + Tokens.Space.lg + Tokens.Space.sm
     }
 
     private var titleFrame: NSRect {
-        let width = max(bounds.width - textX - Tokens.Space.sm, 0)
-        let top = (bounds.height - titleHeight - Tokens.Space.xxs - detailsHeight) / 2
+        let content = contentRect
+        let width = max(content.maxX - textX - Tokens.Space.sm, 0)
+        let top = content.minY + (content.height - titleHeight - Tokens.Space.xxs - detailsHeight) / 2
         return NSRect(x: textX, y: top, width: width, height: titleHeight)
     }
 
     override func layout() {
         super.layout()
-        let height = bounds.height
-        var x = Tokens.Space.sm
+        let content = contentRect
+        var x = content.minX + Tokens.Space.sm
         if hasDayColumn { x += Tokens.Size.dayColumn + Tokens.Space.sm }
         x += CGFloat(depth) * Tokens.Space.xl
         let control = Tokens.Space.lg
-        disclosure.frame = NSRect(x: x, y: (height - control) / 2, width: control, height: control)
+        let y = content.minY + (content.height - control) / 2
+        disclosure.frame = NSRect(x: x, y: y, width: control, height: control)
         x += control + Tokens.Space.xs
-        checkbox.frame = NSRect(x: x, y: (height - control) / 2, width: control, height: control)
+        checkbox.frame = NSRect(x: x, y: y, width: control, height: control)
         editor?.frame = titleFrame
     }
 
@@ -638,9 +661,17 @@ final class TaskCell: NSTableCellView, NSTextFieldDelegate {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let context = NSGraphicsContext.current?.cgContext else { return }
+        if style == .card, shown != nil {
+            let card = NSBezierPath(roundedRect: contentRect.insetBy(dx: 0.5, dy: 0.5), xRadius: Tokens.Radius.md, yRadius: Tokens.Radius.md)
+            Tokens.Colors.NS.backgroundSecondary.setFill()
+            card.fill()
+            (isHighlighted ? Tokens.Colors.NS.accent : Tokens.Colors.NS.separator).setStroke()
+            card.lineWidth = isHighlighted ? 2 : 1
+            card.stroke()
+        }
         let title = titleFrame
         if hasDayColumn, let dayLine {
-            Self.draw(dayLine, in: context, x: Tokens.Space.sm, baselineY: title.minY, width: Tokens.Size.dayColumn, font: Tokens.Typography.NS.caption)
+            Self.draw(dayLine, in: context, x: contentRect.minX + Tokens.Space.sm, baselineY: title.minY, width: Tokens.Size.dayColumn, font: Tokens.Typography.NS.caption)
         }
         if editor == nil, let titleLine {
             Self.draw(titleLine, in: context, x: title.minX, baselineY: title.minY, width: title.width, font: Tokens.Typography.NS.body)
