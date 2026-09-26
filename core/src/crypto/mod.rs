@@ -52,8 +52,12 @@
 
 pub mod keys;
 pub mod primitives;
+pub mod recovery;
+pub mod wrap;
 
 pub use keys::{RecoveryKey, RootKey, SpaceKey, UserKeyPair, UserPublicKeys};
+pub use recovery::RecoveryKeyError;
+pub use wrap::{Wrapped, WrappedSpaceKey};
 
 /// Errors from the encryption layer. None carries key material or
 /// plaintext; a decryption failure says only that it failed.
@@ -79,5 +83,18 @@ pub enum CryptoError {
     Corrupt,
     #[error("the system random source is unavailable")]
     Randomness,
+    #[error(transparent)]
+    RecoveryKey(RecoveryKeyError),
 }
 
+impl RecoveryKey {
+    /// The key as fourteen groups of four characters for a person to save.
+    pub fn render(&self) -> String {
+        recovery::render(self)
+    }
+
+    /// Parse what a person typed, rejecting any single mistyped character.
+    pub fn parse(entered: &str) -> Result<RecoveryKey, RecoveryKeyError> {
+        recovery::parse(entered)
+    }
+}
