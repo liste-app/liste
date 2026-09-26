@@ -31,3 +31,9 @@ thiserror.workspace = true
 # sqlite-wasm-vfs 0.2. Only its sahpool VFS is registered.
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 sqlite-wasm-vfs = "0.2"
+# The RustCrypto crates draw randomness through getrandom, which needs the
+# browser backend on this target. Enabling it here is acceptable because the
+# core already depends on wasm-bindgen through the SQLite VFS on this target.
+getrandom = { version = "0.4", features = ["wasm_js"] }
+# uuid needs an explicit randomness and clock source on this target too.
+uuid = { workspace = true, features = ["js"] }

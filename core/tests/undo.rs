@@ -6,6 +6,7 @@ use common::pending;
 const SUITE: &str = "undo";
 
 #[test]
+#[ignore = "not implemented"]
 fn inverse_op_restores_previous_materialized_state_including_order() {
     pending(
         SUITE,

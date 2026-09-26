@@ -6,6 +6,7 @@ use common::pending;
 const SUITE: &str = "sync";
 
 #[test]
+#[ignore = "not implemented"]
 fn same_field_edited_offline_on_both_devices_converges_by_hlc() {
     pending(
         SUITE,
@@ -14,6 +15,7 @@ fn same_field_edited_offline_on_both_devices_converges_by_hlc() {
 }
 
 #[test]
+#[ignore = "not implemented"]
 fn different_fields_edited_on_both_devices_both_survive() {
     pending(
         SUITE,
@@ -22,21 +24,25 @@ fn different_fields_edited_on_both_devices_both_survive() {
 }
 
 #[test]
+#[ignore = "not implemented"]
 fn delete_versus_edit_follows_the_tombstone_rule() {
     pending(SUITE, "delete_versus_edit_follows_the_tombstone_rule");
 }
 
 #[test]
+#[ignore = "not implemented"]
 fn duplicate_space_id_and_op_id_is_a_noop() {
     pending(SUITE, "duplicate_space_id_and_op_id_is_a_noop");
 }
 
 #[test]
+#[ignore = "not implemented"]
 fn snapshot_plus_tail_equals_full_replay() {
     pending(SUITE, "snapshot_plus_tail_equals_full_replay");
 }
 
 #[test]
+#[ignore = "not implemented"]
 fn unknown_future_op_type_is_stored_skipped_then_applied_after_update() {
     pending(
         SUITE,

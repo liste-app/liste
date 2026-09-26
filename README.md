@@ -50,7 +50,7 @@ just test       # run the core suite and all crate tests
 just lint       # rustfmt and clippy
 ```
 
-The core test suite in `core/tests/` is the definition of done for core changes. Several suites are placeholders that fail until the behavior they describe is implemented.
+The core test suite in `core/tests/` is the definition of done for core changes. Cases that are specified but not yet implemented are marked ignored; `just test-pending` runs them and shows what is still missing.
 
 ## Self-hosting
 

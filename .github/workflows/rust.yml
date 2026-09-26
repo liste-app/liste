@@ -1,44 +1,53 @@
 # Rust workspace: core, ipc, bindings, server, cli, mcp.
-# The core suite in core/tests/ runs on every change to the core, the IPC
-# crate, or the bindings (Section 15 and Section 16 of docs/ARCHITECTURE.md).
+#
+# Runs on every pull request so its checks can be required on main, and
+# filters by path inside the workflow: when nothing Rust-related changed the
+# jobs are skipped, which GitHub treats as passing. The core suite in
+# core/tests/ therefore runs on every change to the core, the IPC crate, or
+# the bindings (Section 15 and Section 16 of docs/ARCHITECTURE.md).
 
 name: Rust
 
 on:
   push:
     branches: [main]
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "core/**"
-      - "ipc/**"
-      - "bindings/**"
-      - "server/**"
-      - "cli/**"
-      - "mcp/**"
-      - ".github/workflows/rust.yml"
   pull_request:
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "core/**"
-      - "ipc/**"
-      - "bindings/**"
-      - "server/**"
-      - "cli/**"
-      - "mcp/**"
-      - ".github/workflows/rust.yml"
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "core/**"
+              - "ipc/**"
+              - "bindings/**"
+              - "server/**"
+              - "cli/**"
+              - "mcp/**"
+              - ".github/workflows/rust.yml"
+
   check:
     name: Format and lint
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +60,8 @@ jobs:
 
   test:
     name: Test
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
