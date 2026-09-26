@@ -185,12 +185,25 @@ final class FixtureAcceptanceTests: XCTestCase {
         }
         XCTAssertGreaterThan(hits, 0)
         print("search worst keystroke: \(String(format: "%.2f", worst)) ms")
-        // The list view's queries stay quick too.
+        // Opening a long list is a count and one window, not every row.
         let t = Date()
         session.selection = .anytime
         let listMs = Date().timeIntervalSince(t) * 1000
-        print("anytime: \(session.tasks.count) tasks in \(String(format: "%.1f", listMs)) ms")
-        XCTAssertGreaterThan(session.tasks.count, 30_000)
+        print("anytime: \(session.count) rows, \(session.tasks.count) loaded, in \(String(format: "%.1f", listMs)) ms")
+        XCTAssertGreaterThan(session.count, 30_000)
+        XCTAssertEqual(session.tasks.count, session.firstWindow)
+        XCTAssertLessThan(listMs, 16, "opening Anytime took \(listMs) ms")
+        // Scrolling deep into the list loads that window and nothing else.
+        let t2 = Date()
+        session.ensureLoaded(20_000..<20_030)
+        let windowMs = Date().timeIntervalSince(t2) * 1000
+        XCTAssertEqual(session.windowStart, 20_000 - session.margin)
+        XCTAssertNotNil(session.task(at: 20_029))
+        XCTAssertNil(session.task(at: 0))
+        XCTAssertLessThan(windowMs, 16, "loading a window took \(windowMs) ms")
+        // A covered range costs nothing and keeps the window.
+        session.ensureLoaded(20_010..<20_020)
+        XCTAssertEqual(session.windowStart, 20_000 - session.margin)
     }
 
     func testReorderAndUndoRestoreManualOrder() throws {
@@ -207,9 +220,27 @@ final class FixtureAcceptanceTests: XCTestCase {
         XCTAssertEqual(session.tasks.map(\.id), [c.id, a.id, b.id])
         session.undo()
         XCTAssertEqual(session.tasks.map(\.id), [a.id, b.id, c.id], "undo restores the order")
-        // Subtasks, lists, tags, delete.
+        // Subtasks come right under their parent, indented; collapsing the
+        // parent hides them from the rows and the count.
         session.setParent(b, a.id)
-        XCTAssertEqual(session.tree.first?.children.map(\.id), [b.id])
+        XCTAssertEqual(session.tasks.map { "\($0.title):\($0.depth)" }, ["first:0", "second:1", "third:0"])
+        XCTAssertTrue(session.tasks[0].hasSubtasks)
+        session.collapsed = [a.id]
+        XCTAssertEqual(session.tasks.map(\.id), [a.id, c.id])
+        XCTAssertEqual(session.count, 2)
+        session.collapsed = []
+        XCTAssertEqual(session.count, 3)
+        // Saved filters live in the core and select through it.
+        let filter = try XCTUnwrap(session.createFilter("Firsts", FilterCriteria(priority: "high")))
+        XCTAssertEqual(session.filters.map(\.name), ["Firsts"])
+        session.setPriority(a, "high")
+        session.selection = .filter(id: filter.id)
+        XCTAssertEqual(session.tasks.map(\.id), [a.id])
+        session.deleteFilter(filter)
+        XCTAssertTrue(session.filters.isEmpty)
+        session.undo()
+        XCTAssertEqual(session.filters.map(\.id), [filter.id], "undo restores a deleted filter")
+        session.selection = .inbox
         let list = try XCTUnwrap(session.createList("Errands"))
         session.setList(c, list.title)
         XCTAssertEqual(try session.task(id: c.id).listTitle, "Errands")

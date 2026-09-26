@@ -6,6 +6,11 @@
 // what the core returns. Refreshes are driven by the core's change
 // notification, so a task added from the CLI or the MCP server appears
 // without polling.
+//
+// Listings are windows (Section 4: virtualize long lists). The session
+// holds the count of rows in the selection and only the rows a view has
+// asked for, plus a margin, so opening a 40,000-row list costs a count
+// and one small fetch.
 
 import Foundation
 import ListeCore
@@ -21,26 +26,11 @@ public enum Selection: Hashable, Sendable {
     case list(id: String)
     case tag(id: String)
     case search(String)
-    case filter(SavedFilter)
+    case filter(id: String)
 
     public var isSearch: Bool {
         if case .search = self { return true }
         return false
-    }
-}
-
-/// A task with its subtasks, for display. Built from the core's flat rows;
-/// nothing here decides anything.
-public struct TaskNode: Identifiable, Hashable, Sendable {
-    public let task: TaskItem
-    public var children: [TaskNode]
-    public let depth: Int
-    public var id: String { task.id }
-
-    public init(task: TaskItem, children: [TaskNode] = [], depth: Int = 0) {
-        self.task = task
-        self.children = children
-        self.depth = depth
     }
 }
 
@@ -49,26 +39,55 @@ public struct TaskNode: Identifiable, Hashable, Sendable {
 public final class Session {
     public private(set) var lists: [TaskList] = []
     public private(set) var tags: [Tag] = []
+    public private(set) var filters: [SavedFilter] = []
+    /// How many rows the selection has, whether or not they are loaded.
+    public private(set) var count: Int = 0
+    /// The loaded window: row `windowStart + i` is `tasks[i]`.
     public private(set) var tasks: [TaskItem] = []
+    public private(set) var windowStart: Int = 0
     public private(set) var isLocked: Bool = false
     public private(set) var lastError: String?
     public private(set) var overdueCount: Int = 0
     /// The selection before a search began, restored on Escape.
     public private(set) var selectionBeforeSearch: Selection?
     public var selection: Selection = .today {
-        didSet { refresh() }
+        didSet {
+            wanted = 0..<0
+            refresh(storeChanged: false)
+        }
     }
     /// How many days `upcoming` looks ahead.
     public var upcomingDays: UInt32 = 14
-    /// How long the last refresh's core queries took, for the debug HUD.
-    public private(set) var lastQueryMilliseconds: Double = 0
-    /// Called after every refresh, for work that follows the store such as
-    /// rescheduling reminders.
-    public var onRefresh: (@MainActor () -> Void)?
+    /// Rows fetched beyond what a view asked for, on each side.
+    public var margin = 60
+    /// Subtask groups the person collapsed, by parent id; a view preference
+    /// that the query carries so the count and the rows agree.
+    public var collapsed: Set<String> = Preferences.collapsedTasks {
+        didSet {
+            Preferences.collapsedTasks = collapsed
+            refresh(storeChanged: false)
+        }
+    }
+    /// How long the last refresh's core queries took, for measurements.
+    /// Not observed: a number that changes on every refresh must not make
+    /// views update.
+    @ObservationIgnored public private(set) var lastQueryMilliseconds: Double = 0
+    /// Counts refreshes, so a view with its own queries (the board) can
+    /// re-run them after every change.
+    public private(set) var generation = 0
+    /// Called after a refresh that followed a change to the store (not one
+    /// that followed a change of selection), for work that tracks the
+    /// data itself, such as rescheduling reminders.
+    public var onStoreChange: (@MainActor () -> Void)?
+    /// How many rows the first window of a selection holds, before a view
+    /// asks for more: enough for a screen, small enough to open at once.
+    public var firstWindow = 40
 
     private let host: ListeHost
     private var forwarder: ChangeForwarder?
     private var pendingRefresh: Task<Void, Never>?
+    /// The rows the view last asked for; empty means the top of the list.
+    private var wanted: Range<Int> = 0..<0
 
     /// Start the host: take the store lock, open the store at the platform
     /// data directory, then listen on the Section 3 socket. Throws
@@ -105,56 +124,146 @@ public final class Session {
         }
     }
 
-    /// Re-read lists, tags, counts, and the selected tasks from the core.
+    /// Re-read lists, tags, filters, counts, and the wanted window of the
+    /// selection from the core, after a change to the store.
     public func refresh() {
+        refresh(storeChanged: true)
+    }
+
+    /// A change of selection re-reads only the count and the window; the
+    /// lists, tags, filters, and the overdue count only change with the
+    /// store.
+    private func refresh(storeChanged: Bool) {
         let started = Date()
         do {
-            isLocked = host.isLocked()
-            lists = try host.lists()
-            tags = try host.tags()
-            let now = Int64(Date().timeIntervalSince1970 * 1000)
-            overdueCount = try host.query(query: Query(dueTo: startOfToday(), limit: 0)).count
-            tasks = try fetch(selection, now: now)
-            lastError = nil
+            // Observable properties are assigned only when their value
+            // changed, so views depending on them are not asked to update
+            // for a refresh that found nothing new.
+            if storeChanged {
+                assign(&isLocked, host.isLocked())
+                assign(&lists, try host.lists())
+                assign(&tags, try host.tags())
+                assign(&filters, try host.filters())
+                assign(&overdueCount, Int(try host.count(query: Query(dueToDay: 0))))
+            }
+            try loadWindow()
+            assign(&lastError, nil)
         } catch {
-            lastError = describe(error)
+            assign(&lastError, describe(error))
         }
         lastQueryMilliseconds = Date().timeIntervalSince(started) * 1000
-        onRefresh?()
+        generation += 1
+        if storeChanged {
+            onStoreChange?()
+        }
     }
 
-    private func fetch(_ selection: Selection, now: Int64) throws -> [TaskItem] {
+    /// Make sure rows `range` are loaded, fetching them with the margin
+    /// when the window does not cover them. Views call this for the rows
+    /// they are about to show; a covered range costs nothing.
+    public func ensureLoaded(_ range: Range<Int>) {
+        let clipped = range.clamped(to: 0..<max(count, 0))
+        wanted = clipped
+        if clipped.isEmpty || (clipped.lowerBound >= windowStart && clipped.upperBound <= windowStart + tasks.count) {
+            return
+        }
+        do {
+            try loadWindow()
+            assign(&lastError, nil)
+        } catch {
+            assign(&lastError, describe(error))
+        }
+    }
+
+    /// The row at `index`, if it is in the loaded window.
+    public func task(at index: Int) -> TaskItem? {
+        let i = index - windowStart
+        return tasks.indices.contains(i) ? tasks[i] : nil
+    }
+
+    /// The row index of a task, if it is in the loaded window.
+    public func index(of id: String) -> Int? {
+        tasks.firstIndex { $0.id == id }.map { $0 + windowStart }
+    }
+
+    /// A task by id: from the window when it is there, else from the core.
+    public func find(_ id: String?) -> TaskItem? {
+        guard let id else { return nil }
+        return tasks.first { $0.id == id } ?? (try? host.task(id: id))
+    }
+
+    private func loadWindow() throws {
+        if case .search(let text) = selection {
+            assign(&tasks, text.isEmpty ? [] : try host.search(query: text, limit: 200))
+            assign(&windowStart, 0)
+            assign(&count, tasks.count)
+            return
+        }
+        var spec = spec(for: selection)
+        assign(&count, Int(try host.count(query: spec.query)))
+        // The first window is exactly a screen; the margin comes with the
+        // first scroll, so opening a list pays for what it shows.
+        var range = wanted.isEmpty ? 0..<firstWindow : (wanted.lowerBound - margin)..<(wanted.upperBound + margin)
+        range = range.clamped(to: 0..<max(count, 0))
+        spec.offset = range.lowerBound
+        spec.limit = range.count
+        assign(&tasks, range.isEmpty ? [] : try host.query(query: spec.query))
+        assign(&windowStart, range.lowerBound)
+    }
+
+    /// The core query a selection stands for. Day windows are relative
+    /// days that the core resolves in its zone.
+    public func spec(for selection: Selection) -> QuerySpec {
+        var q = QuerySpec()
+        q.collapsed = Array(collapsed)
         switch selection {
-        case .today: return try host.today()
-        case .upcoming: return try host.upcoming(days: upcomingDays)
-        case .anytime: return try host.query(query: Query(order: "manual"))
-        case .completed: return try host.query(query: Query(completedOnly: true, order: "completed", limit: 500))
-        case .inbox: return try host.tasksInList(listId: nil)
-        case .list(let id): return try host.tasksInList(listId: id)
-        case .tag(let id): return try host.query(query: Query(tagId: id))
-        case .search(let text):
-            return text.isEmpty ? [] : try host.search(query: text, limit: 200)
-        case .filter(let f): return try host.query(query: f.query)
+        case .today:
+            q.dueToDay = 1
+            q.order = "due"
+        case .upcoming:
+            q.dueFromDay = 1
+            q.dueToDay = 1 + Int64(upcomingDays)
+            q.order = "due"
+        case .anytime:
+            break
+        case .completed:
+            q.completedOnly = true
+            q.order = "completed"
+        case .inbox:
+            q.inbox = true
+        case .list(let id):
+            q.listId = id
+        case .tag(let id):
+            q.tagId = id
+        case .filter(let id):
+            q.filterId = id
+        case .search:
+            break
         }
+        return q
     }
 
-    /// The selected tasks as a tree: top-level tasks with their subtasks
-    /// nested beneath them, in manual order.
-    public var tree: [TaskNode] {
-        Session.tree(of: tasks)
+    /// A count for any query; for board columns.
+    public func count(_ query: Query) -> Int {
+        Int((try? host.count(query: query)) ?? 0)
     }
 
-    public static func tree(of tasks: [TaskItem]) -> [TaskNode] {
-        let ids = Set(tasks.map(\.id))
-        var byParent: [String?: [TaskItem]] = [:]
-        for t in tasks {
-            let parent = t.parentId.flatMap { ids.contains($0) ? $0 : nil }
-            byParent[parent, default: []].append(t)
-        }
-        func build(_ parent: String?, depth: Int) -> [TaskNode] {
-            (byParent[parent] ?? []).map { TaskNode(task: $0, children: build($0.id, depth: depth + 1), depth: depth) }
-        }
-        return build(nil, depth: 0)
+    /// A window of any query; for board columns.
+    public func fetch(_ spec: QuerySpec, offset: Int, limit: Int) -> [TaskItem] {
+        var q = spec
+        q.offset = max(offset, 0)
+        q.limit = max(limit, 0)
+        return (try? host.query(query: q.query)) ?? []
+    }
+
+    /// Every status name on an open task, `open` first.
+    public func statuses() -> [String] {
+        (try? host.statuses()) ?? ["open"]
+    }
+
+    /// Direct subtasks of a task, live ones first in manual order.
+    public func subtasks(of task: TaskItem) -> [TaskItem] {
+        (try? host.query(query: Query(parentId: task.id, includeCompleted: true))) ?? []
     }
 
     /// Parse a line without creating anything, for live highlighting.
@@ -282,8 +391,8 @@ public final class Session {
         perform { try host.reorder(id: task.id, after: after?.id, before: before?.id) }
     }
 
-    /// Move a task one step up or down among its siblings in the current
-    /// list, by keyboard.
+    /// Move a task one step up or down among its siblings in the loaded
+    /// window, by keyboard.
     public func move(_ task: TaskItem, up: Bool) {
         let siblings = tasks.filter { $0.parentId == task.parentId }
         guard let index = siblings.firstIndex(where: { $0.id == task.id }) else { return }
@@ -317,6 +426,28 @@ public final class Session {
         perform { try host.deleteList(id: list.id) }
     }
 
+    /// Save a filter (Section 5); it syncs like a list.
+    @discardableResult
+    public func createFilter(_ name: String, _ criteria: FilterCriteria) -> SavedFilter? {
+        perform { try host.createFilter(name: name, definition: criteria) }
+    }
+
+    public func renameFilter(_ filter: SavedFilter, to name: String) {
+        perform { try host.updateFilter(id: filter.id, name: name, definition: nil, after: nil, before: nil) }
+    }
+
+    public func redefineFilter(_ filter: SavedFilter, _ criteria: FilterCriteria) {
+        perform { try host.updateFilter(id: filter.id, name: nil, definition: criteria, after: nil, before: nil) }
+    }
+
+    public func reorderFilter(_ filter: SavedFilter, after: SavedFilter?, before: SavedFilter?) {
+        perform { try host.updateFilter(id: filter.id, name: nil, definition: nil, after: after?.id, before: before?.id) }
+    }
+
+    public func deleteFilter(_ filter: SavedFilter) {
+        perform { try host.deleteFilter(id: filter.id) }
+    }
+
     public func undo() {
         perform { try host.undo() }
     }
@@ -331,6 +462,17 @@ public final class Session {
         perform { try host.populateFixture(tasks: tasks, seed: seed) } ?? 0
     }
 
+    /// Fill the store with the fixture unless it already holds at least
+    /// `tasks` tasks. Returns whether it did.
+    @discardableResult
+    public func populateFixtureIfSmall(_ tasks: UInt32) -> Bool {
+        var all = QuerySpec()
+        all.includeCompleted = true
+        guard count(all.query) < Int(tasks) else { return false }
+        populateFixture(tasks: tasks)
+        return true
+    }
+
     /// Stop the host: release the store lock and remove the socket.
     public func shutdown() {
         host.setChangeListener(listener: nil)
@@ -342,20 +484,58 @@ public final class Session {
         defer { refresh() }
         do {
             let value = try body()
-            lastError = nil
+            assign(&lastError, nil)
             return value
         } catch {
-            lastError = describe(error)
+            assign(&lastError, describe(error))
             return nil
+        }
+    }
+
+    /// Store a value only when it differs, so observation stays quiet.
+    private func assign<T: Equatable>(_ property: inout T, _ value: T) {
+        if property != value {
+            property = value
         }
     }
 
     private func describe(_ error: Error) -> String {
         (error as? ListeError).map { "\($0)" } ?? error.localizedDescription
     }
+}
 
-    private func startOfToday() -> Int64 {
-        Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000)
+/// A query under construction. The core's `Query` record is immutable;
+/// this is the same set of fields as variables, for views that derive one
+/// query from another (a board column from its selection, a window from a
+/// listing).
+public struct QuerySpec: Hashable, Sendable {
+    public var filterId: String?
+    public var listId: String?
+    public var inbox = false
+    public var tagId: String?
+    public var untagged = false
+    public var parentId: String?
+    public var priority: String?
+    public var status: String?
+    public var dueFromDay: Int64?
+    public var dueToDay: Int64?
+    public var hasReminder = false
+    public var includeCompleted = false
+    public var completedOnly = false
+    public var collapsed: [String] = []
+    public var order: String?
+    public var offset = 0
+    public var limit = 0
+
+    public init() {}
+
+    public var query: Query {
+        Query(
+            filterId: filterId, listId: listId, inbox: inbox, tagId: tagId, untagged: untagged,
+            parentId: parentId, priority: priority, status: status, dueFromDay: dueFromDay,
+            dueToDay: dueToDay, hasReminder: hasReminder, includeCompleted: includeCompleted,
+            completedOnly: completedOnly, collapsed: collapsed, order: order,
+            offset: UInt32(max(offset, 0)), limit: UInt32(max(limit, 0)))
     }
 }
 
@@ -376,3 +556,4 @@ final class ChangeForwarder: ChangeListener, @unchecked Sendable {
 extension TaskItem: Identifiable {}
 extension TaskList: Identifiable {}
 extension Tag: Identifiable {}
+extension SavedFilter: Identifiable {}
