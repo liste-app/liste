@@ -222,6 +222,8 @@ mod native {
         pub inbox: bool,
         #[uniffi(default = None)]
         pub tag_id: Option<String>,
+        #[uniffi(default = false)]
+        pub untagged: bool,
         #[uniffi(default = None)]
         pub parent_id: Option<String>,
         #[uniffi(default = None)]
@@ -260,6 +262,7 @@ mod native {
                 list_id: self.list_id.as_deref().map(uuid).transpose()?,
                 inbox: self.inbox,
                 tag_id: self.tag_id.as_deref().map(uuid).transpose()?,
+                untagged: self.untagged,
                 parent_id: self.parent_id.as_deref().map(uuid).transpose()?,
                 priority: self.priority,
                 status: self.status,

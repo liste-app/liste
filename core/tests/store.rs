@@ -167,6 +167,17 @@ fn every_field_kind_round_trips_through_the_tables() {
         )
         .unwrap();
     assert_eq!(inbox.len(), 1, "the parent is in the inbox");
+    let untagged = store
+        .tasks(
+            space,
+            &TaskFilter {
+                untagged: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(untagged.len(), 1, "the parent has no tag");
+    assert_eq!(untagged[0].id, parent);
 }
 
 #[test]

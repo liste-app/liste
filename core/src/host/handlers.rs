@@ -1152,6 +1152,7 @@ fn query_filter(inner: &Inner, store: &Store, q: &TaskQuery) -> Result<TaskFilte
         },
         parent: q.parent_id.map(id),
         tag: q.tag_id.map(id),
+        untagged: q.untagged,
         priority,
         status: q.status.clone(),
         due_between: match (from, to) {

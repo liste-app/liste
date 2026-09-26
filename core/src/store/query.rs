@@ -30,6 +30,8 @@ pub struct TaskFilter {
     pub parent: Option<Id>,
     /// Only tasks carrying this tag.
     pub tag: Option<Id>,
+    /// Only tasks with no tag at all.
+    pub untagged: bool,
     pub priority: Option<Priority>,
     pub status: Option<String>,
     /// Only tasks due in `[from, to)` (Unix milliseconds).
@@ -342,6 +344,10 @@ fn where_clause(
             " AND EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = tasks.id AND tt.tag_id = ?{})",
             args.len()
         ));
+    }
+    if filter.untagged {
+        where_sql
+            .push_str(" AND NOT EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = tasks.id)");
     }
     if let Some(priority) = filter.priority {
         args.push(Box::new(priority as i64));

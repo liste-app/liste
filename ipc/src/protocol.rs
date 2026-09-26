@@ -187,6 +187,9 @@ pub struct TaskQuery {
     pub inbox: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag_id: Option<Uuid>,
+    /// Only tasks with no tag at all.
+    #[serde(default)]
+    pub untagged: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
