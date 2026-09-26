@@ -16,6 +16,15 @@
 		A10000010000000000000010 /* ListeKit in Frameworks */ = {isa = PBXBuildFile; productRef = A100000100000000000000D1 /* ListeKit */; };
 		A10000010000000000000011 /* ListeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000100000000000000B1 /* ListeApp.swift */; };
 		A10000010000000000000012 /* ListeKit in Frameworks */ = {isa = PBXBuildFile; productRef = A100000100000000000000D2 /* ListeKit */; };
+		A2000001000000000000B1B1 /* UIState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B1F1 /* UIState.swift */; };
+		A2000001000000000000B2B1 /* Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B2F1 /* Sidebar.swift */; };
+		A2000001000000000000B3B1 /* TaskListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B3F1 /* TaskListView.swift */; };
+		A2000001000000000000B4B1 /* Inspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B4F1 /* Inspector.swift */; };
+		A2000001000000000000B5B1 /* BoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B5F1 /* BoardView.swift */; };
+		A2000001000000000000B6B1 /* FrameMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B6F1 /* FrameMeter.swift */; };
+		A2000001000000000000B7B1 /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B7F1 /* SettingsWindow.swift */; };
+		A2000001000000000000B8B1 /* CommandPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B8F1 /* CommandPalette.swift */; };
+		A2000001000000000000B9B1 /* Reminders.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B9F1 /* Reminders.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +38,15 @@
 		A100000100000000000000B1 /* ListeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListeApp.swift; sourceTree = "<group>"; };
 		A100000100000000000000C1 /* Liste.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Liste.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A100000100000000000000C2 /* Liste iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Liste iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000001000000000000B1F1 /* UIState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIState.swift; sourceTree = "<group>"; };
+		A2000001000000000000B2F1 /* Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sidebar.swift; sourceTree = "<group>"; };
+		A2000001000000000000B3F1 /* TaskListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskListView.swift; sourceTree = "<group>"; };
+		A2000001000000000000B4F1 /* Inspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Inspector.swift; sourceTree = "<group>"; };
+		A2000001000000000000B5F1 /* BoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardView.swift; sourceTree = "<group>"; };
+		A2000001000000000000B6F1 /* FrameMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameMeter.swift; sourceTree = "<group>"; };
+		A2000001000000000000B7F1 /* SettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindow.swift; sourceTree = "<group>"; };
+		A2000001000000000000B8F1 /* CommandPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPalette.swift; sourceTree = "<group>"; };
+		A2000001000000000000B9F1 /* Reminders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Reminders.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -77,6 +95,15 @@
 				A100000100000000000000A4 /* HotKey.swift */,
 				A100000100000000000000A5 /* QuickCapturePanel.swift */,
 				A100000100000000000000A6 /* MainView.swift */,
+				A2000001000000000000B1F1 /* UIState.swift */,
+				A2000001000000000000B2F1 /* Sidebar.swift */,
+				A2000001000000000000B3F1 /* TaskListView.swift */,
+				A2000001000000000000B4F1 /* Inspector.swift */,
+				A2000001000000000000B5F1 /* BoardView.swift */,
+				A2000001000000000000B6F1 /* FrameMeter.swift */,
+				A2000001000000000000B7F1 /* SettingsWindow.swift */,
+				A2000001000000000000B8F1 /* CommandPalette.swift */,
+				A2000001000000000000B9F1 /* Reminders.swift */,
 				A100000100000000000000A7 /* Info.plist */,
 			);
 			path = macOS;
@@ -229,6 +256,15 @@
 				A1000001000000000000000D /* HotKey.swift in Sources */,
 				A1000001000000000000000E /* QuickCapturePanel.swift in Sources */,
 				A1000001000000000000000F /* MainView.swift in Sources */,
+				A2000001000000000000B1B1 /* UIState.swift in Sources */,
+				A2000001000000000000B2B1 /* Sidebar.swift in Sources */,
+				A2000001000000000000B3B1 /* TaskListView.swift in Sources */,
+				A2000001000000000000B4B1 /* Inspector.swift in Sources */,
+				A2000001000000000000B5B1 /* BoardView.swift in Sources */,
+				A2000001000000000000B6B1 /* FrameMeter.swift in Sources */,
+				A2000001000000000000B7B1 /* SettingsWindow.swift in Sources */,
+				A2000001000000000000B8B1 /* CommandPalette.swift in Sources */,
+				A2000001000000000000B9B1 /* Reminders.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
