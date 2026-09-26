@@ -6,7 +6,7 @@ mod common;
 use liste_core::ids::Id;
 use liste_core::model::{EntityType, Field, Priority, Value};
 use liste_core::op::Mutation;
-use liste_core::store::{Applied, Store, TaskFilter, fixture};
+use liste_core::store::{Applied, Store, StoreError, TaskFilter, fixture};
 
 fn set(field: Field, value: impl Into<Value>) -> Mutation {
     Mutation::Set {
@@ -350,4 +350,32 @@ fn search_plan_scans_fts_first() {
         !plan.iter().any(|l| l.contains("TEMP B-TREE")),
         "no sort step; the scan is already in rowid order: {plan:?}"
     );
+}
+
+/// While the device's keys are locked, nothing about tasks is readable or
+/// writable; metadata is.
+#[test]
+fn a_locked_store_answers_locked_not_plaintext() {
+    let mut store = Store::open_in_memory(Id::new()).unwrap();
+    let space = Id::new();
+    let task = Id::new();
+    let op = store.op(space, EntityType::Task, task, set(Field::Title, "secret"));
+    store.commit(std::slice::from_ref(&op)).unwrap();
+    store.lock();
+    assert!(store.is_locked());
+    let locked = |r: Result<(), StoreError>| assert!(matches!(r, Err(StoreError::Locked)), "{r:?}");
+    locked(store.task(task).map(|_| ()));
+    locked(store.tasks(space, &TaskFilter::default()).map(|_| ()));
+    locked(store.search(space, "sec", 10).map(|_| ()));
+    locked(store.space_state(space).map(|_| ()));
+    locked(store.pending_ops(space).map(|_| ()));
+    locked(store.logged_op(space, op.op_id).map(|_| ()));
+    locked(store.snapshot(space).map(|_| ()));
+    locked(store.commit(std::slice::from_ref(&op)));
+    locked(store.apply(&op).map(|_| ()));
+    locked(store.undo().map(|_| ()));
+    assert_eq!(store.cursor(space).unwrap(), 0, "metadata stays readable");
+    assert_eq!(store.op_count(space).unwrap(), 1);
+    store.unlock();
+    assert_eq!(store.task(task).unwrap().unwrap().title, "secret");
 }

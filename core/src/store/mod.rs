@@ -53,6 +53,8 @@ pub enum StoreError {
         unpushed: usize,
         ahead_of_cursor: usize,
     },
+    #[error("locked: keys have not been unlocked on this device")]
+    Locked,
 }
 
 /// Result alias for store operations.
@@ -82,6 +84,7 @@ pub struct Store {
     clock: HlcClock<Box<dyn WallClock>>,
     undo: UndoStack,
     supported_schema: u32,
+    locked: bool,
 }
 
 impl Store {
@@ -124,7 +127,33 @@ impl Store {
             clock: HlcClock::with_wall(device, wall),
             undo: UndoStack::default(),
             supported_schema: SCHEMA_VERSION,
+            locked: false,
         })
+    }
+
+    /// Refuse every read and write of task data until [`unlock`](Self::unlock).
+    /// The host locks the store while the device's keys are not unlocked,
+    /// so the CLI and the MCP server get [`StoreError::Locked`] instead of
+    /// plaintext (Section 3). Metadata such as the cursor stays readable.
+    pub fn lock(&mut self) {
+        self.locked = true;
+    }
+
+    /// Allow data access again.
+    pub fn unlock(&mut self) {
+        self.locked = false;
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.locked
+    }
+
+    fn check_unlocked(&self) -> Result<()> {
+        if self.locked {
+            Err(StoreError::Locked)
+        } else {
+            Ok(())
+        }
     }
 
     /// The device this store belongs to.
@@ -172,6 +201,7 @@ impl Store {
     /// The op that removes `tag` from `task`, citing every add currently
     /// observed for it. Returns `None` if the task does not carry the tag.
     pub fn remove_tag_op(&mut self, space_id: Id, task: Id, tag: Id) -> Result<Option<Op>> {
+        self.check_unlocked()?;
         let observed = query::tag_adds(&self.conn, task, tag)?;
         if observed.is_empty() {
             return Ok(None);
@@ -186,6 +216,7 @@ impl Store {
 
     /// Apply one op of any origin. Idempotent on `(space_id, op_id)`.
     pub fn apply(&mut self, op: &Op) -> Result<Applied> {
+        self.check_unlocked()?;
         self.clock.observe(&op.hlc);
         let now = self.clock.current().wall_ms;
         let tx = self.conn.transaction()?;
@@ -197,6 +228,7 @@ impl Store {
     /// Apply an op pulled from the server with its assigned `seq`, and
     /// advance the space's cursor.
     pub fn apply_remote(&mut self, op: &Op, seq: u64) -> Result<Applied> {
+        self.check_unlocked()?;
         self.clock.observe(&op.hlc);
         let now = self.clock.current().wall_ms;
         let tx = self.conn.transaction()?;
@@ -209,6 +241,7 @@ impl Store {
     /// Apply many ops in one transaction with no undo entry: bulk import,
     /// fixtures, or a batch pulled from the server (pass each op's `seq`).
     pub fn apply_batch(&mut self, ops: &[(Op, Option<u64>)]) -> Result<usize> {
+        self.check_unlocked()?;
         for (op, _) in ops {
             self.clock.observe(&op.hlc);
         }
@@ -231,6 +264,7 @@ impl Store {
     /// Apply a group of local ops as one transaction and one undo step.
     /// The ops are queued for push (no `seq` yet).
     pub fn commit(&mut self, ops: &[Op]) -> Result<()> {
+        self.check_unlocked()?;
         let now = self.clock.current().wall_ms;
         let inverses = {
             let tx = self.conn.transaction()?;
@@ -253,6 +287,7 @@ impl Store {
 
     /// Undo the most recent local step. Returns whether there was one.
     pub fn undo(&mut self) -> Result<bool> {
+        self.check_unlocked()?;
         let Some(entry) = self.undo.take_undo() else {
             return Ok(false);
         };
@@ -263,6 +298,7 @@ impl Store {
 
     /// Redo the most recently undone step. Returns whether there was one.
     pub fn redo(&mut self) -> Result<bool> {
+        self.check_unlocked()?;
         let Some(entry) = self.undo.take_redo() else {
             return Ok(false);
         };
@@ -309,6 +345,7 @@ impl Store {
     /// Retry ops that were logged but skipped, after the supported schema
     /// version was raised. Returns how many were materialized.
     pub fn reapply_skipped(&mut self, space_id: Id) -> Result<usize> {
+        self.check_unlocked()?;
         let now = self.clock.current().wall_ms;
         let tx = self.conn.transaction()?;
         let count = apply::reapply_skipped(&tx, space_id, self.supported_schema, now)?;
@@ -318,6 +355,7 @@ impl Store {
 
     /// Local ops not yet acknowledged by the server, oldest first.
     pub fn pending_ops(&self, space_id: Id) -> Result<Vec<Op>> {
+        self.check_unlocked()?;
         query::pending_ops(&self.conn, space_id)
     }
 
@@ -349,39 +387,47 @@ impl Store {
 
     /// Read one op back from the log.
     pub fn logged_op(&self, space_id: Id, op_id: Id) -> Result<Option<Op>> {
+        self.check_unlocked()?;
         query::logged_op(&self.conn, space_id, op_id)
     }
 
     // ---- Queries ---------------------------------------------------------
 
     pub fn space(&self, id: Id) -> Result<Option<crate::model::Space>> {
+        self.check_unlocked()?;
         query::space(&self.conn, id)
     }
 
     pub fn list(&self, id: Id) -> Result<Option<crate::model::List>> {
+        self.check_unlocked()?;
         query::list(&self.conn, id)
     }
 
     /// Live lists in a space in manual order.
     pub fn lists(&self, space_id: Id) -> Result<Vec<crate::model::List>> {
+        self.check_unlocked()?;
         query::lists(&self.conn, space_id)
     }
 
     pub fn tag(&self, id: Id) -> Result<Option<crate::model::Tag>> {
+        self.check_unlocked()?;
         query::tag(&self.conn, id)
     }
 
     /// Live tags in a space by name.
     pub fn tags(&self, space_id: Id) -> Result<Vec<crate::model::Tag>> {
+        self.check_unlocked()?;
         query::tags(&self.conn, space_id)
     }
 
     pub fn task(&self, id: Id) -> Result<Option<crate::model::Task>> {
+        self.check_unlocked()?;
         query::task(&self.conn, id)
     }
 
     /// Live tasks matching the filter, in manual order.
     pub fn tasks(&self, space_id: Id, filter: &TaskFilter) -> Result<Vec<crate::model::Task>> {
+        self.check_unlocked()?;
         query::tasks(&self.conn, space_id, filter)
     }
 
@@ -393,12 +439,14 @@ impl Store {
         text: &str,
         limit: usize,
     ) -> Result<Vec<crate::model::Task>> {
+        self.check_unlocked()?;
         query::search(&self.conn, space_id, text, limit)
     }
 
     /// Everything materialized for a space, including tombstoned rows,
     /// sorted by id. Two stores that converged have equal states.
     pub fn space_state(&self, space_id: Id) -> Result<SpaceState> {
+        self.check_unlocked()?;
         query::space_state(&self.conn, space_id)
     }
 
@@ -411,6 +459,7 @@ impl Store {
     /// cursor. Otherwise returns [`StoreError::SnapshotNotReady`]; the sync
     /// runner pushes, pulls, and retries.
     pub fn snapshot(&self, space_id: Id) -> Result<Snapshot> {
+        self.check_unlocked()?;
         let (unpushed, ahead_of_cursor) = query::ops_not_covered_by_cursor(&self.conn, space_id)?;
         if unpushed > 0 || ahead_of_cursor > 0 {
             return Err(StoreError::SnapshotNotReady {
@@ -425,6 +474,7 @@ impl Store {
     /// never uploaded.
     #[doc(hidden)]
     pub fn snapshot_unchecked(&self, space_id: Id) -> Result<Snapshot> {
+        self.check_unlocked()?;
         snapshot::export(&self.conn, space_id)
     }
 
@@ -432,6 +482,7 @@ impl Store {
     /// cursor to the snapshot's `seq`. Ops after that `seq` are then applied
     /// with [`apply_remote`](Self::apply_remote).
     pub fn restore(&mut self, snapshot: &Snapshot) -> Result<()> {
+        self.check_unlocked()?;
         let now = self.clock.current().wall_ms;
         let tx = self.conn.transaction()?;
         snapshot::import(&tx, snapshot, now)?;
