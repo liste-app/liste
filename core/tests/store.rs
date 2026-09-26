@@ -327,3 +327,27 @@ fn fixture_populates_through_the_op_path() {
     };
     assert_eq!(titles(&store), titles(&again));
 }
+
+/// The bundled SQLite once planned the search as one FTS probe per task,
+/// which is quadratic. The FTS scan must drive the join.
+#[test]
+fn search_plan_scans_fts_first() {
+    let mut store = Store::open_in_memory(Id::new()).unwrap();
+    let space = Id::new();
+    fixture::populate(&mut store, space, 200, 1).unwrap();
+    let plan = store.search_plan().unwrap();
+    assert!(!plan.is_empty());
+    assert!(
+        plan[0].contains("SCAN f VIRTUAL TABLE"),
+        "the FTS table must be the outer loop: {plan:?}"
+    );
+    assert!(
+        plan.iter()
+            .any(|l| l.contains("SEARCH t USING INTEGER PRIMARY KEY")),
+        "each hit must be a primary-key lookup: {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|l| l.contains("TEMP B-TREE")),
+        "no sort step; the scan is already in rowid order: {plan:?}"
+    );
+}
