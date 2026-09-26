@@ -179,6 +179,12 @@ fn cli_capture_works_with_the_gui_running() {
     let all = liste_ipc::TaskQuery::default();
     let total = client.count(all.clone()).unwrap();
     assert_eq!(total, 82);
+    // The count is served from the host's cache until the store changes.
+    assert_eq!(client.count(all.clone()).unwrap(), 82);
+    client.capture("one more", None).unwrap();
+    assert_eq!(client.count(all.clone()).unwrap(), 83);
+    assert!(client.undo().unwrap());
+    assert_eq!(client.count(all.clone()).unwrap(), 82);
     let page = client
         .query(liste_ipc::TaskQuery {
             offset: 80,

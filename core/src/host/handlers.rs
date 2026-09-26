@@ -330,9 +330,20 @@ fn dispatch(inner: &Inner, request: Request) -> Result<Response, IpcError> {
         Request::Query(q) => query_window(inner, store, &q)?,
         Request::Count(q) => {
             let filter = query_filter(inner, store, &q)?;
-            Response::Count {
-                total: store.count(space, &filter).map_err(error)?,
+            let mut cache = inner.counts.lock().unwrap_or_else(|e| e.into_inner());
+            if cache.generation != store.generation() {
+                cache.generation = store.generation();
+                cache.by_filter.clear();
             }
+            let total = match cache.by_filter.get(&(space, filter.clone())) {
+                Some(n) => *n,
+                None => {
+                    let n = store.count(space, &filter).map_err(error)?;
+                    cache.by_filter.insert((space, filter), n);
+                    n
+                }
+            };
+            Response::Count { total }
         }
         Request::Statuses => Response::Statuses(store.statuses(space).map_err(error)?),
         Request::Reorder {

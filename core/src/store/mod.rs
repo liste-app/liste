@@ -94,6 +94,7 @@ pub struct Store {
     supported_schema: u32,
     locked: bool,
     on_change: Option<ChangeListener>,
+    generation: u64,
 }
 
 impl Store {
@@ -138,6 +139,7 @@ impl Store {
             supported_schema: SCHEMA_VERSION,
             locked: false,
             on_change: None,
+            generation: 0,
         })
     }
 
@@ -147,10 +149,17 @@ impl Store {
         self.on_change = listener;
     }
 
-    fn changed(&self) {
+    fn changed(&mut self) {
+        self.generation += 1;
         if let Some(l) = &self.on_change {
             l();
         }
+    }
+
+    /// Counts changes to materialized state since the store was opened;
+    /// anything derived from a read stays valid while it holds still.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Refuse every read and write of task data until [`unlock`](Self::unlock).

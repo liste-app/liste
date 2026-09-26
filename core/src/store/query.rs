@@ -10,7 +10,7 @@ use crate::model::{Filter, List, Priority, Space, Tag, Task};
 use crate::op::Op;
 
 /// How a task list is ordered.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TaskOrder {
     /// The person's manual order, then id.
     #[default]
@@ -22,7 +22,7 @@ pub enum TaskOrder {
 }
 
 /// Which tasks to list. Defaults to every live, incomplete task in the space.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TaskFilter {
     /// `Some(None)` means the inbox (no list); `Some(Some(id))` one list.
     pub list: Option<Option<Id>>,
