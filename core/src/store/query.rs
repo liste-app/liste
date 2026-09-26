@@ -23,6 +23,14 @@ pub struct TaskFilter {
     pub limit: usize,
 }
 
+/// An op as the log holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoggedOp {
+    pub op: Op,
+    pub seq: Option<u64>,
+    pub applied: bool,
+}
+
 /// Everything materialized for one space, sorted by id.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpaceState {
@@ -376,5 +384,32 @@ pub(super) fn cursor(conn: &Connection, space_id: Id) -> Result<u64> {
 pub(super) fn op_count(conn: &Connection, space_id: Id) -> Result<u64> {
     Ok(conn
         .prepare_cached("SELECT count(*) FROM ops WHERE space_id = ?1")?
+        .query_row(params![space_id], |r| r.get::<_, i64>(0))? as u64)
+}
+
+pub(super) fn recent_ops(conn: &Connection, space_id: Id, limit: usize) -> Result<Vec<LoggedOp>> {
+    let rows: Vec<(Vec<u8>, Option<i64>, i64)> = conn
+        .prepare_cached(
+            "SELECT payload, seq, applied FROM ops WHERE space_id = ?1
+             ORDER BY hlc_wall DESC, hlc_counter DESC, device_id DESC LIMIT ?2",
+        )?
+        .query_map(params![space_id, limit as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    rows.into_iter()
+        .map(|(payload, seq, applied)| {
+            Ok(LoggedOp {
+                op: Op::decode(&payload)?,
+                seq: seq.map(|s| s as u64),
+                applied: applied != 0,
+            })
+        })
+        .collect()
+}
+
+pub(super) fn pending_count(conn: &Connection, space_id: Id) -> Result<u64> {
+    Ok(conn
+        .prepare_cached("SELECT count(*) FROM ops WHERE space_id = ?1 AND seq IS NULL")?
         .query_row(params![space_id], |r| r.get::<_, i64>(0))? as u64)
 }

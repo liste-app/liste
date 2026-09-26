@@ -39,7 +39,7 @@ struct Unlocked {
 
 /// See the module documentation.
 pub struct Keyring {
-    store: Box<dyn KeyStore>,
+    store: Box<dyn KeyStore + Send>,
     unlocked: Option<Unlocked>,
 }
 
@@ -59,7 +59,7 @@ impl std::fmt::Debug for Keyring {
 
 impl Keyring {
     /// A locked keyring over the platform's keystore.
-    pub fn new(store: Box<dyn KeyStore>) -> Keyring {
+    pub fn new(store: Box<dyn KeyStore + Send>) -> Keyring {
         Keyring {
             store,
             unlocked: None,
