@@ -62,7 +62,12 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "s
 
 # Calendar math and time zones (Sections 5 and 15). Pinned exactly; the
 # bundled tz database keeps every device on identical rules.
-jiff = { version = "=0.2.37", default-features = false, features = ["std", "tzdb-bundle-always", "serde"] }
+jiff = { version = "=0.2.37", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always", "serde"] }
+
+# Local IPC transport (Section 3): Unix domain sockets and Windows named
+# pipes behind one interface.
+interprocess = "=2.4.4"
+ctrlc = { version = "=3.5.2", features = ["termination"] }
 
 # Shared
 uuid = { version = "1.26.1", features = ["v7", "serde"] }
