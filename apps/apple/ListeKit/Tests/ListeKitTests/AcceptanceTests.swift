@@ -146,3 +146,80 @@ final class AcceptanceTests: XCTestCase {
         }
     }
 }
+
+@MainActor
+final class FixtureAcceptanceTests: XCTestCase {
+    private var dir: URL!
+    private var session: Session!
+
+    override func setUp() async throws {
+        let nanos = UInt64(Date().timeIntervalSince1970 * 1_000_000) % 1_000_000_000
+        dir = URL(fileURLWithPath: "/tmp/liste-f-\(ProcessInfo.processInfo.processIdentifier)-\(nanos)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        session = try Session(dataDir: dir.path, socketPath: dir.appendingPathComponent("host.sock").path)
+    }
+
+    override func tearDown() async throws {
+        session?.shutdown()
+        session = nil
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    // Script 6: search returns on the first keystroke offline, including
+    // against the large fixture.
+    func testSearchReturnsOnEveryKeystrokeAgainstTheLargeFixture() throws {
+        let start = Date()
+        let created = session.populateFixture(tasks: 50_000)
+        XCTAssertEqual(created, 50_000)
+        print("fixture: 50,000 tasks in \(String(format: "%.1f", Date().timeIntervalSince(start))) s")
+        var worst = 0.0
+        var hits = 0
+        for query in ["c", "ca", "cal", "call", "call m", "renew p", "x", "gym", "quarterly report"] {
+            let t = Date()
+            let results = session.search(query, limit: 50)
+            let ms = Date().timeIntervalSince(t) * 1000
+            worst = max(worst, ms)
+            hits += results.count
+            print("search \(query.debugDescription): \(results.count) hits in \(String(format: "%.2f", ms)) ms")
+            XCTAssertLessThan(ms, 50, "keystroke \(query.debugDescription) took \(ms) ms")
+        }
+        XCTAssertGreaterThan(hits, 0)
+        print("search worst keystroke: \(String(format: "%.2f", worst)) ms")
+        // The list view's queries stay quick too.
+        let t = Date()
+        session.selection = .anytime
+        let listMs = Date().timeIntervalSince(t) * 1000
+        print("anytime: \(session.tasks.count) tasks in \(String(format: "%.1f", listMs)) ms")
+        XCTAssertGreaterThan(session.tasks.count, 30_000)
+    }
+
+    func testReorderAndUndoRestoreManualOrder() throws {
+        session.selection = .inbox
+        let a = try session.capture("first").task
+        let b = try session.capture("second").task
+        let c = try session.capture("third").task
+        XCTAssertEqual(session.tasks.map(\.id), [a.id, b.id, c.id])
+        session.reorder(c, after: nil, before: a)
+        XCTAssertEqual(session.tasks.map(\.id), [c.id, a.id, b.id])
+        session.move(a, up: true)
+        XCTAssertEqual(session.tasks.map(\.id), [a.id, c.id, b.id])
+        session.undo()
+        XCTAssertEqual(session.tasks.map(\.id), [c.id, a.id, b.id])
+        session.undo()
+        XCTAssertEqual(session.tasks.map(\.id), [a.id, b.id, c.id], "undo restores the order")
+        // Subtasks, lists, tags, delete.
+        session.setParent(b, a.id)
+        XCTAssertEqual(session.tree.first?.children.map(\.id), [b.id])
+        let list = try XCTUnwrap(session.createList("Errands"))
+        session.setList(c, list.title)
+        XCTAssertEqual(try session.task(id: c.id).listTitle, "Errands")
+        session.addTag(c, "weekend")
+        XCTAssertEqual(session.tags.map(\.name), ["weekend"])
+        session.selection = .tag(id: session.tags[0].id)
+        XCTAssertEqual(session.tasks.map(\.id), [c.id])
+        session.delete(c)
+        XCTAssertTrue(session.tasks.isEmpty)
+        session.undo()
+        XCTAssertEqual(session.tasks.map(\.id), [c.id], "undo restores a deleted task")
+    }
+}
