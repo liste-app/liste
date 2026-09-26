@@ -1,8 +1,8 @@
 // The kanban view: the same tasks as the list, grouped into columns by
 // status, priority, list, or tag. Each column is its own core query;
-// dropping a card on a column, or moving it with Option-arrows, changes
-// that one field through the core, and dropping it between two cards of
-// its own column moves it in manual order. Column order is a per-grouping
+// dropping a card between two cards of any column changes that one field
+// and its place in manual order through the core, in one change, and
+// Option-arrows move it to the next column. Column order is a per-grouping
 // preference, set by dragging a heading. The columns themselves are
 // AppKit tables (see Board.swift).
 
@@ -39,8 +39,7 @@ struct BoardView: View {
 
     private var actions: BoardActions {
         BoardActions(
-            assign: { task, key in assign(task, to: key) },
-            reorder: { task, after, before in session.reorder(task, after: after, before: before) },
+            move: { task, key, after, before in move(task, to: key, after: after, before: before) },
             reorderColumns: { keys in
                 order = keys
                 Preferences.setKanbanColumnOrder(keys, for: group)
@@ -123,21 +122,29 @@ struct BoardView: View {
         return sorted.map { BoardColumn(key: $0.0, title: $0.1, query: $0.2) }
     }
 
-    /// Change the grouped field of `task` so it lands in column `key`.
-    private func assign(_ task: TaskItem, to key: String) {
+    /// Change the grouped field of `task` so it lands in column `key`, and
+    /// its place in manual order, as one change and one undo step.
+    private func move(_ task: TaskItem, to key: String, after: TaskItem?, before: TaskItem?) {
+        var priority: String?
+        var list: String?
+        var addTags: [String] = []
+        var removeTags: [String] = []
+        var status: String?
         switch group {
-        case "priority": session.setPriority(task, key)
+        case "priority":
+            if task.priority != key { priority = key }
         case "list":
-            let name = session.lists.first { $0.id == key }?.title ?? ""
-            session.setList(task, name)
+            if (task.listId ?? "") != key { list = session.lists.first { $0.id == key }?.title ?? "" }
         case "tag":
-            if key.isEmpty {
-                for tag in task.tags { session.removeTag(task, tag) }
-            } else {
-                for tag in task.tags where tag != key { session.removeTag(task, tag) }
-                if !task.tags.contains(key) { session.addTag(task, key) }
-            }
-        default: session.setStatus(task, key)
+            removeTags = key.isEmpty ? task.tags : task.tags.filter { $0 != key }
+            if !key.isEmpty, !task.tags.contains(key) { addTags = [key] }
+        default:
+            if task.status != key { status = key }
         }
+        session.update(
+            task,
+            TaskPatch(
+                priority: priority, list: list, addTags: addTags, removeTags: removeTags, status: status,
+                after: after?.id, before: before?.id))
     }
 }

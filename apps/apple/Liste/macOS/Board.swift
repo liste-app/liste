@@ -12,14 +12,16 @@ import ListeCore
 import ListeKit
 import SwiftUI
 
-/// One column's window: the count and the pages of cards loaded so far.
+/// One column's window: the count, and the cards loaded from the top as a
+/// contiguous run, so a drop can move a card locally before the core
+/// confirms it.
 @MainActor
 final class BoardColumn {
     let key: String
     let title: String
     let query: QuerySpec
     private(set) var count = 0
-    private var pages: [Int: [TaskItem]] = [:]
+    private var loaded: [TaskItem] = []
     private let pageSize = 50
 
     init(key: String, title: String, query: QuerySpec) {
@@ -28,52 +30,53 @@ final class BoardColumn {
         self.query = query
     }
 
-    /// Re-count and re-fetch the pages already on screen.
+    /// Re-count and re-fetch what was loaded.
     func reload(from session: Session) {
         count = session.count(query.query)
-        let shown = pages.keys.filter { $0 * pageSize < count }
-        pages = [:]
-        for page in shown {
-            pages[page] = session.fetch(query, offset: page * pageSize, limit: pageSize)
-        }
+        let have = min(loaded.count, count)
+        loaded = have > 0 ? session.fetch(query, offset: 0, limit: max(have, pageSize)) : []
     }
 
     func task(at index: Int) -> TaskItem? {
-        let page = index / pageSize
-        guard let rows = pages[page] else { return nil }
-        let i = index - page * pageSize
-        return rows.indices.contains(i) ? rows[i] : nil
+        loaded.indices.contains(index) ? loaded[index] : nil
     }
 
     func index(of id: String) -> Int? {
-        for (page, rows) in pages {
-            if let i = rows.firstIndex(where: { $0.id == id }) {
-                return page * pageSize + i
-            }
-        }
-        return nil
+        loaded.firstIndex { $0.id == id }
     }
 
-    /// Load the pages holding `rows` that are not loaded yet.
+    /// Load through the end of `rows` if it is not loaded yet.
     func ensure(_ rows: Range<Int>, from session: Session) {
-        guard !rows.isEmpty else { return }
-        for page in (rows.lowerBound / pageSize)...((rows.upperBound - 1) / pageSize) where pages[page] == nil {
-            pages[page] = session.fetch(query, offset: page * pageSize, limit: pageSize)
-        }
+        guard !rows.isEmpty, rows.upperBound > loaded.count, loaded.count < count else { return }
+        let want = ((rows.upperBound + pageSize - 1) / pageSize) * pageSize
+        loaded += session.fetch(query, offset: loaded.count, limit: want - loaded.count)
     }
 
     func contains(_ id: String) -> Bool {
         index(of: id) != nil
+    }
+
+    /// Take a card out, ahead of the core: the drop's source column.
+    @discardableResult
+    func remove(_ id: String) -> TaskItem? {
+        guard let i = index(of: id) else { return nil }
+        count = max(count - 1, 0)
+        return loaded.remove(at: i)
+    }
+
+    /// Put a card in at `index`, ahead of the core: the drop's target.
+    func insert(_ task: TaskItem, at index: Int) {
+        count += 1
+        loaded.insert(task, at: min(max(index, 0), loaded.count))
     }
 }
 
 /// What a drop or a key asks the board to do.
 @MainActor
 struct BoardActions {
-    /// Put `task` in the column with `key`.
-    var assign: (TaskItem, String) -> Void
-    /// Move `task` between two neighbours in manual order.
-    var reorder: (TaskItem, TaskItem?, TaskItem?) -> Void
+    /// Put `task` in the column with `key`, between two neighbours in
+    /// manual order, as one change.
+    var move: (TaskItem, String, TaskItem?, TaskItem?) -> Void
     /// Columns in a new order, by key.
     var reorderColumns: ([String]) -> Void
     var select: (String?) -> Void
@@ -320,9 +323,9 @@ final class ColumnView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSDr
         table.column = self
         table.registerForDraggedTypes([TaskTable.Coordinator.dragType])
         table.setDraggingSourceOperationMask(.move, forLocal: true)
-        table.draggingDestinationFeedbackStyle = .gap
+        table.draggingDestinationFeedbackStyle = .regular
         scroll.documentView = table
-        scroll.hasVerticalScroller = true
+        scroll.hasVerticalScroller = false
         scroll.drawsBackground = false
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(
@@ -439,56 +442,59 @@ final class ColumnView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSDr
         return item
     }
 
+    /// Every drop is a place between two cards, in this column or another;
+    /// the table draws the insertion line there.
     func tableView(
         _ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
         proposedDropOperation dropOperation: NSTableView.DropOperation
     ) -> NSDragOperation {
         guard info.draggingPasteboard.availableType(from: [TaskTable.Coordinator.dragType]) != nil else { return [] }
-        if info.draggingSource as? NSTableView === tableView {
-            // Within the column: a place between two cards.
-            if dropOperation == .on {
-                tableView.setDropRow(row, dropOperation: .above)
-            }
-        } else {
-            // From elsewhere: the whole column.
-            tableView.setDropRow(-1, dropOperation: .on)
+        if dropOperation == .on {
+            tableView.setDropRow(row, dropOperation: .above)
         }
         return .move
     }
 
+    /// The card moves here at once, in this column's window and the
+    /// source's, then the core is asked for the same change; its refresh
+    /// then finds the columns already right.
     func tableView(
         _ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int,
         dropOperation: NSTableView.DropOperation
     ) -> Bool {
-        guard let id = info.draggingPasteboard.string(forType: TaskTable.Coordinator.dragType) else { return false }
-        let actions = coordinator.actions
-        if info.draggingSource as? NSTableView === tableView {
-            guard let from = column.index(of: id), let moved = column.task(at: from) else { return false }
-            var after: TaskItem?
-            var i = row - 1
-            while i >= 0, let t = column.task(at: i) {
-                if t.id != moved.id, t.parentId == moved.parentId {
-                    after = t
-                    break
-                }
-                i -= 1
-            }
-            var before: TaskItem?
-            var j = row
-            while j < count, let t = column.task(at: j) {
-                if t.id != moved.id, t.parentId == moved.parentId {
-                    before = t
-                    break
-                }
-                j += 1
-            }
-            guard after != nil || before != nil else { return false }
-            DispatchQueue.main.async { actions.reorder(moved, after, before) }
-            return true
+        guard let id = info.draggingPasteboard.string(forType: TaskTable.Coordinator.dragType),
+            let source = coordinator.column(holding: id),
+            let moved = source.column.task(at: source.column.index(of: id) ?? -1)
+        else { return false }
+        var at = min(max(row, 0), count)
+        if source === self, let from = column.index(of: id), from < at {
+            at -= 1
         }
-        guard let source = coordinator.column(holding: id), let task = source.column.task(at: source.column.index(of: id) ?? -1) else { return false }
+        source.column.remove(id)
+        var after: TaskItem?
+        var i = at - 1
+        while i >= 0, let t = column.task(at: i) {
+            if t.parentId == moved.parentId {
+                after = t
+                break
+            }
+            i -= 1
+        }
+        var before: TaskItem?
+        var j = at
+        while j < column.count, let t = column.task(at: j) {
+            if t.parentId == moved.parentId {
+                before = t
+                break
+            }
+            j += 1
+        }
+        column.insert(moved, at: at)
+        source.rowsChanged()
+        if source !== self { rowsChanged() }
         let key = column.key
-        DispatchQueue.main.async { actions.assign(task, key) }
+        let actions = coordinator.actions
+        DispatchQueue.main.async { actions.move(moved, key, after, before) }
         return true
     }
 
@@ -530,11 +536,11 @@ final class ColumnView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSDr
             return true
         case 123 where mods == .option:  // left
             guard here > 0 else { return true }
-            coordinator.actions.assign(task, keys[here - 1])
+            coordinator.actions.move(task, keys[here - 1], nil, nil)
             return true
         case 124 where mods == .option:  // right
             guard here + 1 < keys.count else { return true }
-            coordinator.actions.assign(task, keys[here + 1])
+            coordinator.actions.move(task, keys[here + 1], nil, nil)
             return true
         default:
             return false

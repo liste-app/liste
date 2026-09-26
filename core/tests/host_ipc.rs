@@ -114,6 +114,38 @@ fn cli_capture_works_with_the_gui_running() {
     assert!(client.task(task.id).unwrap().completed_at.is_none());
     assert!(client.redo().unwrap());
     assert!(client.task(task.id).unwrap().completed_at.is_some());
+    // One change can set a field and a place in manual order together.
+    let (a, _) = client.capture("alpha", None).unwrap();
+    let (b, _) = client.capture("beta", None).unwrap();
+    let moved = client
+        .update(
+            b.id,
+            liste_ipc::TaskPatch {
+                status: Some("doing".into()),
+                before: Some(a.id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(moved.status, "doing");
+    let order: Vec<_> = client
+        .query(liste_ipc::TaskQuery::default())
+        .unwrap()
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    assert!(order.iter().position(|t| *t == b.id) < order.iter().position(|t| *t == a.id));
+    assert!(client.undo().unwrap(), "one undo step");
+    assert_eq!(client.task(b.id).unwrap().status, "open");
+    let order: Vec<_> = client
+        .query(liste_ipc::TaskQuery::default())
+        .unwrap()
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    assert!(order.iter().position(|t| *t == a.id) < order.iter().position(|t| *t == b.id));
+    client.delete(a.id).unwrap();
+    client.delete(b.id).unwrap();
     // Saved filters over IPC: create, list, query through, update, delete,
     // undo. The filter's due window is resolved by the host.
     let soon = client

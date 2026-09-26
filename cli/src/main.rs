@@ -251,6 +251,7 @@ fn execute(client: &mut Client, command: Cmd) -> Result<Output, Error> {
                 status,
                 parent,
                 reminder,
+                ..Default::default()
             },
         )?),
         Cmd::Lists => Output::Lists(client.lists()?),

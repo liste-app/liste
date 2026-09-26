@@ -863,6 +863,15 @@ fn update_task(
             ));
         }
     }
+    if patch.after.is_some() || patch.before.is_some() {
+        ops.extend(position_ops(
+            inner,
+            store,
+            task_id,
+            patch.after.map(id),
+            patch.before.map(id),
+        )?);
+    }
     if let Some(notes) = &patch.notes {
         ops.push(store.op(
             space,
@@ -1190,6 +1199,19 @@ fn reorder_task(
     after: Option<Id>,
     before: Option<Id>,
 ) -> Result<(), IpcError> {
+    let ops = position_ops(inner, store, task_id, after, before)?;
+    store.commit(&ops).map_err(error)
+}
+
+/// The ops that place `task_id` between `after` and `before` in manual
+/// order: one, or every sibling's when the list needs rebalancing.
+fn position_ops(
+    inner: &Inner,
+    store: &mut Store,
+    task_id: Id,
+    after: Option<Id>,
+    before: Option<Id>,
+) -> Result<Vec<crate::op::Op>, IpcError> {
     let space = inner.space_id;
     let task = store
         .task(task_id)
@@ -1237,7 +1259,7 @@ fn reorder_task(
             };
             order.insert(index.min(order.len()), task_id);
             let keys = crate::fractional::rebalanced(order.len());
-            let ops: Vec<crate::op::Op> = order
+            return Ok(order
                 .iter()
                 .zip(keys)
                 .map(|(t, k)| {
@@ -1251,12 +1273,10 @@ fn reorder_task(
                         },
                     )
                 })
-                .collect();
-            store.commit(&ops).map_err(error)?;
-            return Ok(());
+                .collect());
         }
     };
-    let op = store.op(
+    Ok(vec![store.op(
         space,
         EntityType::Task,
         task_id,
@@ -1264,6 +1284,5 @@ fn reorder_task(
             field: Field::Position,
             value: Value::from(key),
         },
-    );
-    store.commit(std::slice::from_ref(&op)).map_err(error)
+    )])
 }
