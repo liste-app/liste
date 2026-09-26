@@ -19,6 +19,9 @@ x25519-dalek.workspace = true
 ed25519-dalek.workspace = true
 hkdf.workspace = true
 sha2.workspace = true
+zeroize.workspace = true
+subtle.workspace = true
+getrandom.workspace = true
 uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -47,4 +50,8 @@ harness = false
 
 [[bench]]
 name = "search"
+harness = false
+
+[[bench]]
+name = "crypto"
 harness = false
