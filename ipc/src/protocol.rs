@@ -261,6 +261,12 @@ pub struct TaskPatch {
     /// Reminder as natural-language date text; an empty string clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reminder: Option<String>,
+    /// Also move the task in manual order to sit after `after` and before
+    /// `before`, in the same change as the fields above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<Uuid>,
 }
 
 /// The developer harness (Section 13, `liste debug`).

@@ -369,6 +369,12 @@ mod native {
         /// A reminder as natural-language time; an empty string clears it.
         #[uniffi(default = None)]
         pub reminder: Option<String>,
+        /// Also move the task in manual order between these two, in the
+        /// same change.
+        #[uniffi(default = None)]
+        pub after: Option<String>,
+        #[uniffi(default = None)]
+        pub before: Option<String>,
     }
 
     #[derive(Debug, Clone, uniffi::Record)]
@@ -581,6 +587,8 @@ mod native {
                     status: patch.status,
                     parent: patch.parent,
                     reminder: patch.reminder,
+                    after: patch.after.as_deref().map(uuid).transpose()?,
+                    before: patch.before.as_deref().map(uuid).transpose()?,
                 },
             })?)
         }
