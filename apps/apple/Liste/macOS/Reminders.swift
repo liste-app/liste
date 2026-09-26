@@ -28,7 +28,10 @@ final class Reminders: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Replace every pending reminder with the current set from the core.
+    private var scheduled: [String: Int64] = [:]
+
+    /// Replace every pending reminder with the current set from the core,
+    /// when that set changed.
     func reschedule() {
         let tasks: [TaskItem]
         do {
@@ -36,6 +39,12 @@ final class Reminders: NSObject, UNUserNotificationCenterDelegate {
         } catch {
             return
         }
+        var current: [String: Int64] = [:]
+        for task in tasks {
+            if let at = task.reminderAt { current[task.id] = at }
+        }
+        guard current != scheduled else { return }
+        scheduled = current
         center.removeAllPendingNotificationRequests()
         let now = Date()
         for task in tasks {
