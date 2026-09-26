@@ -78,6 +78,8 @@ mod native {
         pub status: String,
         pub completed_at: Option<i64>,
         pub parent_id: Option<String>,
+        /// Indentation under the rows above it in the same listing.
+        pub depth: u32,
         pub tags: Vec<String>,
         pub recurrence: Option<String>,
         pub created_at: i64,
@@ -100,6 +102,7 @@ mod native {
                 status: t.status,
                 completed_at: t.completed_at,
                 parent_id: t.parent_id.map(|p| p.to_string()),
+                depth: t.depth,
                 tags: t.tags,
                 recurrence: t.recurrence,
                 created_at: t.created_at,
@@ -139,7 +142,10 @@ mod native {
     }
 
     /// A filter over tasks; absent fields do not filter. `order` is
-    /// `manual`, `due`, or `completed`.
+    /// `manual`, `due`, or `completed`. `due_from_day` and `due_to_day`
+    /// are whole days from today in the host's zone (today is
+    /// `due_to_day: 1`, overdue `due_to_day: 0`), so the app never
+    /// computes a day boundary. `offset` and `limit` pick a window.
     #[derive(Debug, Clone, Default, uniffi::Record)]
     pub struct Query {
         #[uniffi(default = None)]
@@ -149,6 +155,8 @@ mod native {
         #[uniffi(default = None)]
         pub tag_id: Option<String>,
         #[uniffi(default = None)]
+        pub parent_id: Option<String>,
+        #[uniffi(default = None)]
         pub priority: Option<String>,
         #[uniffi(default = None)]
         pub status: Option<String>,
@@ -156,6 +164,10 @@ mod native {
         pub due_from: Option<i64>,
         #[uniffi(default = None)]
         pub due_to: Option<i64>,
+        #[uniffi(default = None)]
+        pub due_from_day: Option<i64>,
+        #[uniffi(default = None)]
+        pub due_to_day: Option<i64>,
         #[uniffi(default = false)]
         pub has_reminder: bool,
         #[uniffi(default = false)]
@@ -165,7 +177,32 @@ mod native {
         #[uniffi(default = None)]
         pub order: Option<String>,
         #[uniffi(default = 0)]
+        pub offset: u32,
+        #[uniffi(default = 0)]
         pub limit: u32,
+    }
+
+    impl Query {
+        fn into_ipc(self) -> Result<TaskQuery, ListeError> {
+            Ok(TaskQuery {
+                list_id: self.list_id.as_deref().map(uuid).transpose()?,
+                inbox: self.inbox,
+                tag_id: self.tag_id.as_deref().map(uuid).transpose()?,
+                parent_id: self.parent_id.as_deref().map(uuid).transpose()?,
+                priority: self.priority,
+                status: self.status,
+                due_from: self.due_from,
+                due_to: self.due_to,
+                due_from_day: self.due_from_day,
+                due_to_day: self.due_to_day,
+                has_reminder: self.has_reminder,
+                include_completed: self.include_completed,
+                completed_only: self.completed_only,
+                order: self.order,
+                offset: self.offset as usize,
+                limit: self.limit as usize,
+            })
+        }
     }
 
     /// A byte range of the captured text that was interpreted. Offsets are
@@ -468,22 +505,25 @@ mod native {
             })?)
         }
 
-        /// Any combination of filters: smart lists, tags, saved filters.
+        /// A window of the tasks matching the query, in its order.
         pub fn query(&self, query: Query) -> Result<Vec<TaskItem>, ListeError> {
-            tasks(self.handle(Request::Query(TaskQuery {
-                list_id: query.list_id.as_deref().map(uuid).transpose()?,
-                inbox: query.inbox,
-                tag_id: query.tag_id.as_deref().map(uuid).transpose()?,
-                priority: query.priority,
-                status: query.status,
-                due_from: query.due_from,
-                due_to: query.due_to,
-                has_reminder: query.has_reminder,
-                include_completed: query.include_completed,
-                completed_only: query.completed_only,
-                order: query.order,
-                limit: query.limit as usize,
-            }))?)
+            tasks(self.handle(Request::Query(query.into_ipc()?))?)
+        }
+
+        /// How many tasks match the query, ignoring its window.
+        pub fn count(&self, query: Query) -> Result<u32, ListeError> {
+            match self.handle(Request::Count(query.into_ipc()?))? {
+                Response::Count { total } => Ok(total.min(u32::MAX as usize) as u32),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Every status name in use, `open` first.
+        pub fn statuses(&self) -> Result<Vec<String>, ListeError> {
+            match self.handle(Request::Statuses)? {
+                Response::Statuses(s) => Ok(s),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
         }
 
         /// Move a task in manual order to sit after `after` and before

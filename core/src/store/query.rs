@@ -41,8 +41,20 @@ pub struct TaskFilter {
     pub completed_only: bool,
     pub include_deleted: bool,
     pub order: TaskOrder,
+    /// Rows to skip, for a window into a long list.
+    pub offset: usize,
     /// Zero means no limit.
     pub limit: usize,
+}
+
+/// A task in a listing, with its place in the outline: `depth` is how many
+/// of its ancestors the listing shows above it, so a subtask whose parent
+/// is not shown (completed, filtered out) moves up to its nearest shown
+/// ancestor. Zero outside manual order, where subtasks are plain rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskRow {
+    pub task: Task,
+    pub depth: u32,
 }
 
 /// An op as the log holds it.
@@ -90,6 +102,12 @@ fn task_from_row(r: &Row<'_>) -> rusqlite::Result<Task> {
 }
 
 fn fill_tags(conn: &Connection, tasks: &mut [Task]) -> Result<()> {
+    let mut refs: Vec<&mut Task> = tasks.iter_mut().collect();
+    fill_tags_each(conn, &mut refs)
+}
+
+/// One tag query per task; right for a window of rows.
+fn fill_tags_each(conn: &Connection, tasks: &mut [&mut Task]) -> Result<()> {
     let mut stmt = conn.prepare_cached(
         "SELECT DISTINCT tag_id FROM task_tags WHERE task_id = ?1 ORDER BY tag_id",
     )?;
@@ -106,7 +124,7 @@ fn fill_tags(conn: &Connection, tasks: &mut [Task]) -> Result<()> {
 /// positional `args`), merged into `tasks` by id.
 fn fill_tags_where(
     conn: &Connection,
-    tasks: &mut [Task],
+    tasks: &mut [&mut Task],
     where_sql: &str,
     args: &[Box<dyn rusqlite::ToSql>],
 ) -> Result<()> {
@@ -229,7 +247,8 @@ pub(super) fn task(conn: &Connection, id: Id) -> Result<Option<Task>> {
     Ok(tasks.pop())
 }
 
-pub(super) fn tasks(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Result<Vec<Task>> {
+/// The `WHERE` predicate (over `tasks`) and its positional arguments.
+fn where_clause(space_id: Id, filter: &TaskFilter) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
     let mut where_sql = String::from("tasks.space_id = ?1");
     let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(space_id)];
     match filter.list {
@@ -276,25 +295,120 @@ pub(super) fn tasks(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Res
     if !filter.include_deleted {
         where_sql.push_str(" AND tasks.deleted_at IS NULL");
     }
+    (where_sql, args)
+}
+
+/// Status names in use on live tasks: `open` first, then the rest by name.
+pub(super) fn statuses(conn: &Connection, space_id: Id) -> Result<Vec<String>> {
+    let mut names: Vec<String> = conn
+        .prepare_cached(
+            "SELECT DISTINCT status FROM tasks WHERE space_id = ?1 AND deleted_at IS NULL
+             ORDER BY status",
+        )?
+        .query_map(params![space_id], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    if let Some(i) = names.iter().position(|s| s == "open") {
+        names.remove(i);
+    }
+    names.insert(0, "open".into());
+    Ok(names)
+}
+
+/// How many tasks match, ignoring `offset` and `limit`.
+pub(super) fn count(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Result<usize> {
+    let (where_sql, args) = where_clause(space_id, filter);
+    let sql = format!("SELECT count(*) FROM tasks WHERE {where_sql}");
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let n: i64 = stmt.query_row(rusqlite::params_from_iter(args.iter()), |r| r.get(0))?;
+    Ok(n as usize)
+}
+
+pub(super) fn tasks(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Result<Vec<Task>> {
+    Ok(task_rows(conn, space_id, filter)?
+        .into_iter()
+        .map(|r| r.task)
+        .collect())
+}
+
+/// The matching tasks in the filter's order, `offset` rows in and at most
+/// `limit` rows long, each with its outline depth.
+pub(super) fn task_rows(
+    conn: &Connection,
+    space_id: Id,
+    filter: &TaskFilter,
+) -> Result<Vec<TaskRow>> {
+    let (where_sql, args) = where_clause(space_id, filter);
     let order = match filter.order {
-        TaskOrder::Manual => "position, id",
-        TaskOrder::DueThenManual => "due_at IS NULL, due_at, position, id",
+        TaskOrder::Manual => "sort_key, id",
+        TaskOrder::DueThenManual => "due_at IS NULL, due_at, sort_key, id",
         TaskOrder::CompletedDesc => "completed_at DESC, id",
     };
-    let mut sql = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE {where_sql} ORDER BY {order}");
-    if filter.limit > 0 {
-        sql.push_str(&format!(" LIMIT {}", filter.limit));
+    let mut sql =
+        format!("SELECT {TASK_COLUMNS}, sort_key FROM tasks WHERE {where_sql} ORDER BY {order}");
+    if filter.limit > 0 || filter.offset > 0 {
+        let limit = if filter.limit > 0 {
+            filter.limit as i64
+        } else {
+            -1
+        };
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {}", filter.offset));
     }
     let mut stmt = conn.prepare_cached(&sql)?;
-    let mut tasks: Vec<Task> = stmt
-        .query_map(rusqlite::params_from_iter(args.iter()), task_from_row)?
+    let mut rows: Vec<(Task, String)> = stmt
+        .query_map(rusqlite::params_from_iter(args.iter()), |r| {
+            Ok((task_from_row(r)?, r.get::<_, String>(17)?))
+        })?
         .collect::<rusqlite::Result<_>>()?;
-    if filter.limit > 0 && tasks.len() >= filter.limit {
-        fill_tags(conn, &mut tasks)?;
-    } else {
-        fill_tags_where(conn, &mut tasks, &where_sql, &args)?;
+    let windowed = filter.limit > 0 || filter.offset > 0;
+    {
+        let mut tasks: Vec<&mut Task> = rows.iter_mut().map(|(t, _)| t).collect();
+        if windowed && tasks.len() < 1_000 {
+            fill_tags_each(conn, &mut tasks)?;
+        } else {
+            fill_tags_where(conn, &mut tasks, &where_sql, &args)?;
+        }
     }
-    Ok(tasks)
+    let depths: Vec<u32> = if filter.order == TaskOrder::Manual {
+        visible_depths(&rows)
+    } else {
+        vec![0; rows.len()]
+    };
+    Ok(rows
+        .into_iter()
+        .zip(depths)
+        .map(|((task, _), depth)| TaskRow { task, depth })
+        .collect())
+}
+
+/// Depths relative to what the listing shows. Rows come in outline order
+/// and each carries its materialized path, so a row's shown ancestors are
+/// exactly the rows above it whose path is a prefix of its own; a parent
+/// that is not in the listing (completed, filtered out) closes the gap.
+/// Ancestors of the first row may sit above the window and count as shown.
+fn visible_depths(rows: &[(Task, String)]) -> Vec<u32> {
+    let mut stack: Vec<String> = Vec::new();
+    if let Some((_, first)) = rows.first() {
+        let mut prefix = String::new();
+        for part in first.split('/') {
+            if !prefix.is_empty() {
+                stack.push(prefix.clone());
+                prefix.push('/');
+            }
+            prefix.push_str(part);
+        }
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for (_, key) in rows {
+        while let Some(top) = stack.last() {
+            if key.len() > top.len() && key.starts_with(top) && key.as_bytes()[top.len()] == b'/' {
+                break;
+            }
+            stack.pop();
+        }
+        out.push(stack.len() as u32);
+        stack.push(key.clone());
+    }
+    out
 }
 
 /// Turn free text into an FTS5 query: each term is quoted and matched as a
@@ -386,7 +500,8 @@ pub(super) fn space_state(conn: &Connection, space_id: Id) -> Result<SpaceState>
         .query_map(params![space_id], task_from_row)?
         .collect::<rusqlite::Result<_>>()?;
     let args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(space_id)];
-    fill_tags_where(conn, &mut tasks, "tasks.space_id = ?1", &args)?;
+    let mut refs: Vec<&mut Task> = tasks.iter_mut().collect();
+    fill_tags_where(conn, &mut refs, "tasks.space_id = ?1", &args)?;
     Ok(SpaceState {
         space: space(conn, space_id)?,
         lists,

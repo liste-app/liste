@@ -249,6 +249,26 @@ impl Client {
         Client::expect_tasks(self.call(Request::Query(query))?)
     }
 
+    /// How many tasks `query` matches, ignoring its window.
+    pub fn count(&mut self, query: TaskQuery) -> Result<usize, ClientError> {
+        match self.call(Request::Count(query))? {
+            Response::Count { total } => Ok(total),
+            other => Err(ClientError::Protocol(format!(
+                "expected count, got {other:?}"
+            ))),
+        }
+    }
+
+    /// Every status name in use.
+    pub fn statuses(&mut self) -> Result<Vec<String>, ClientError> {
+        match self.call(Request::Statuses)? {
+            Response::Statuses(s) => Ok(s),
+            other => Err(ClientError::Protocol(format!(
+                "expected statuses, got {other:?}"
+            ))),
+        }
+    }
+
     pub fn reorder(
         &mut self,
         id: Uuid,

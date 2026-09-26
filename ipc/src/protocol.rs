@@ -66,8 +66,14 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         list_id: Option<Uuid>,
     },
-    /// Any combination of filters (smart lists, tags, saved filters).
+    /// Any combination of filters (smart lists, tags, saved filters),
+    /// windowed by `offset` and `limit`.
     Query(TaskQuery),
+    /// How many tasks a query matches, ignoring its window. A list asks
+    /// this once, then fetches only the rows on screen.
+    Count(TaskQuery),
+    /// Every status name in use, for board columns.
+    Statuses,
     /// Move a task in manual order to sit between two neighbours; either
     /// may be absent for the ends.
     Reorder {
@@ -130,11 +136,23 @@ pub struct TaskQuery {
     pub priority: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Only direct subtasks of this task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<Uuid>,
     /// Due in `[due_from, due_to)`, Unix milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due_from: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due_to: Option<i64>,
+    /// Due in `[today + due_from_day, today + due_to_day)` in whole days
+    /// of the host's zone, so a client never computes a day boundary:
+    /// today is `due_to_day: 1`, overdue is `due_to_day: 0`, the next
+    /// week is `due_from_day: 1, due_to_day: 8`. Combined with the
+    /// absolute bounds above by intersection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_from_day: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_to_day: Option<i64>,
     #[serde(default)]
     pub has_reminder: bool,
     #[serde(default)]
@@ -144,6 +162,10 @@ pub struct TaskQuery {
     /// `manual` (default), `due`, or `completed`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<String>,
+    /// Rows to skip.
+    #[serde(default)]
+    pub offset: usize,
+    /// Zero means no limit.
     #[serde(default)]
     pub limit: usize,
 }
@@ -208,6 +230,10 @@ pub enum Response {
     Status(StatusView),
     Task(TaskView),
     Tasks(Vec<TaskView>),
+    Count {
+        total: usize,
+    },
+    Statuses(Vec<String>),
     Captured {
         task: TaskView,
         spans: Vec<SpanView>,
@@ -301,6 +327,10 @@ pub struct TaskView {
     pub completed_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<Uuid>,
+    /// How far this row is indented under rows above it in the same
+    /// listing; zero outside manual order.
+    #[serde(default)]
+    pub depth: u32,
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recurrence: Option<String>,
@@ -426,6 +456,8 @@ mod tests {
         // Every response shape encodes, including sequences and scalars.
         for r in [
             Response::Tasks(vec![]),
+            Response::Count { total: 3 },
+            Response::Statuses(vec!["open".into()]),
             Response::Lists(vec![]),
             Response::OpLog(vec![]),
             Response::Row(serde_json::Value::Null),

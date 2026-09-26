@@ -32,7 +32,7 @@ use crate::op::{DecodeError, Mutation, Op, SCHEMA_VERSION};
 use crate::undo::{Inverse, UndoStack};
 
 pub use capture::{Captured, Completed};
-pub use query::{LoggedOp, SpaceState, TaskFilter, TaskOrder};
+pub use query::{LoggedOp, SpaceState, TaskFilter, TaskOrder, TaskRow};
 pub use snapshot::Snapshot;
 
 /// Errors from the store.
@@ -480,10 +480,30 @@ impl Store {
         query::task(&self.conn, id)
     }
 
-    /// Live tasks matching the filter, in manual order.
+    /// Tasks matching the filter, in its order.
     pub fn tasks(&self, space_id: Id, filter: &TaskFilter) -> Result<Vec<crate::model::Task>> {
         self.check_unlocked()?;
         query::tasks(&self.conn, space_id, filter)
+    }
+
+    /// A window of the tasks matching the filter (`offset`, `limit`), each
+    /// with its outline depth. With [`count`](Self::count) this is what a
+    /// virtualized list asks for: the total, then only the rows on screen.
+    pub fn task_rows(&self, space_id: Id, filter: &TaskFilter) -> Result<Vec<TaskRow>> {
+        self.check_unlocked()?;
+        query::task_rows(&self.conn, space_id, filter)
+    }
+
+    /// Every status name on a live task in the space, `open` first.
+    pub fn statuses(&self, space_id: Id) -> Result<Vec<String>> {
+        self.check_unlocked()?;
+        query::statuses(&self.conn, space_id)
+    }
+
+    /// How many tasks match the filter, ignoring its window.
+    pub fn count(&self, space_id: Id, filter: &TaskFilter) -> Result<usize> {
+        self.check_unlocked()?;
+        query::count(&self.conn, space_id, filter)
     }
 
     /// Full-text search over live task titles and notes; every whitespace

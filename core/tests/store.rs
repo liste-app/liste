@@ -379,3 +379,183 @@ fn a_locked_store_answers_locked_not_plaintext() {
     store.unlock();
     assert_eq!(store.task(task).unwrap().unwrap().title, "secret");
 }
+
+#[test]
+fn manual_order_is_an_outline_and_windows_count_the_whole_listing() {
+    let mut store = Store::open_in_memory(Id::new()).unwrap();
+    let space = Id::new();
+    let keys = liste_core::fractional::rebalanced(4);
+    let ids: Vec<Id> = (0..4).map(|_| Id::new()).collect();
+    let mut ops = Vec::new();
+    for (i, id) in ids.iter().enumerate() {
+        ops.push(store.op(
+            space,
+            EntityType::Task,
+            *id,
+            set(Field::Title, format!("t{i}")),
+        ));
+        ops.push(store.op(
+            space,
+            EntityType::Task,
+            *id,
+            set(Field::Position, keys[i].clone()),
+        ));
+    }
+    // t3 becomes a subtask of t0 and sits between t0 and t1 in the outline
+    // whatever its own key says; t2 becomes a subtask of t3, two deep.
+    ops.push(store.op(
+        space,
+        EntityType::Task,
+        ids[3],
+        set(Field::ParentId, Value::Id(ids[0])),
+    ));
+    ops.push(store.op(
+        space,
+        EntityType::Task,
+        ids[2],
+        set(Field::ParentId, Value::Id(ids[3])),
+    ));
+    store.commit(&ops).unwrap();
+    let filter = TaskFilter::default();
+    let rows = store.task_rows(space, &filter).unwrap();
+    let titles: Vec<(&str, u32)> = rows
+        .iter()
+        .map(|r| (r.task.title.as_str(), r.depth))
+        .collect();
+    assert_eq!(titles, vec![("t0", 0), ("t3", 1), ("t2", 2), ("t1", 0)]);
+    assert_eq!(store.count(space, &filter).unwrap(), 4);
+    // A window in the middle: the count is unchanged and the first row's
+    // depth is kept from the stored outline.
+    let window = store
+        .task_rows(
+            space,
+            &TaskFilter {
+                offset: 1,
+                limit: 2,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let titles: Vec<(&str, u32)> = window
+        .iter()
+        .map(|r| (r.task.title.as_str(), r.depth))
+        .collect();
+    assert_eq!(titles, vec![("t3", 1), ("t2", 2)]);
+    assert_eq!(
+        store
+            .count(
+                space,
+                &TaskFilter {
+                    offset: 1,
+                    limit: 2,
+                    ..Default::default()
+                }
+            )
+            .unwrap(),
+        4
+    );
+    // Completing the middle task lifts its subtask to the level of the
+    // nearest shown ancestor: t2 now shows directly under t0.
+    let done = store.op(
+        space,
+        EntityType::Task,
+        ids[3],
+        set(Field::CompletedAt, 5i64),
+    );
+    store.commit(std::slice::from_ref(&done)).unwrap();
+    let rows = store.task_rows(space, &filter).unwrap();
+    let titles: Vec<(&str, u32)> = rows
+        .iter()
+        .map(|r| (r.task.title.as_str(), r.depth))
+        .collect();
+    assert_eq!(titles, vec![("t0", 0), ("t2", 1), ("t1", 0)]);
+    assert_eq!(store.count(space, &filter).unwrap(), 3);
+    // Moving t0 to the end takes its subtree along.
+    let last = liste_core::fractional::between(Some(&keys[3]), None).unwrap();
+    let mv = store.op(space, EntityType::Task, ids[0], set(Field::Position, last));
+    store.commit(std::slice::from_ref(&mv)).unwrap();
+    let rows = store.task_rows(space, &filter).unwrap();
+    let titles: Vec<&str> = rows.iter().map(|r| r.task.title.as_str()).collect();
+    assert_eq!(titles, vec!["t1", "t0", "t2"]);
+    // Undo puts it back, and a snapshot round trip rebuilds the same outline.
+    store.undo().unwrap();
+    let before: Vec<(String, u32)> = store
+        .task_rows(space, &filter)
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.task.title, r.depth))
+        .collect();
+    assert_eq!(before[0].0, "t0");
+    let snapshot = store.snapshot_unchecked(space).unwrap();
+    let mut other = Store::open_in_memory(Id::new()).unwrap();
+    other.restore(&snapshot).unwrap();
+    let after: Vec<(String, u32)> = other
+        .task_rows(space, &filter)
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.task.title, r.depth))
+        .collect();
+    assert_eq!(after, before);
+}
+
+#[test]
+fn a_subtask_whose_parent_arrives_later_attaches_when_it_does() {
+    let mut store = Store::open_in_memory(Id::new()).unwrap();
+    let space = Id::new();
+    let parent = Id::new();
+    let child = Id::new();
+    let keys = liste_core::fractional::rebalanced(2);
+    let ops = vec![
+        store.op(space, EntityType::Task, child, set(Field::Title, "child")),
+        store.op(
+            space,
+            EntityType::Task,
+            child,
+            set(Field::Position, keys[0].clone()),
+        ),
+        store.op(
+            space,
+            EntityType::Task,
+            child,
+            set(Field::ParentId, Value::Id(parent)),
+        ),
+    ];
+    store.commit(&ops).unwrap();
+    let rows = store.task_rows(space, &TaskFilter::default()).unwrap();
+    assert_eq!(
+        rows[0].depth, 0,
+        "no parent row yet: shown at the top level"
+    );
+    let ops = vec![
+        store.op(space, EntityType::Task, parent, set(Field::Title, "parent")),
+        store.op(
+            space,
+            EntityType::Task,
+            parent,
+            set(Field::Position, keys[1].clone()),
+        ),
+    ];
+    store.commit(&ops).unwrap();
+    let rows = store.task_rows(space, &TaskFilter::default()).unwrap();
+    let titles: Vec<(&str, u32)> = rows
+        .iter()
+        .map(|r| (r.task.title.as_str(), r.depth))
+        .collect();
+    assert_eq!(titles, vec![("parent", 0), ("child", 1)]);
+    // A parent cycle from concurrent edits leaves every row in place.
+    let cycle = store.op(
+        space,
+        EntityType::Task,
+        parent,
+        set(Field::ParentId, Value::Id(child)),
+    );
+    store.commit(std::slice::from_ref(&cycle)).unwrap();
+    assert_eq!(store.count(space, &TaskFilter::default()).unwrap(), 2);
+    assert_eq!(
+        store
+            .task_rows(space, &TaskFilter::default())
+            .unwrap()
+            .len(),
+        2
+    );
+}

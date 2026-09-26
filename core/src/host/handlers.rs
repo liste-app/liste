@@ -13,7 +13,7 @@ use crate::ids::Id;
 use crate::model::{EntityType, Field, List, Priority, Task, Value};
 use crate::op::Mutation;
 use crate::parse::{Context, parse};
-use crate::store::{Store, StoreError, TaskFilter, TaskOrder, fixture};
+use crate::store::{Store, StoreError, TaskFilter, TaskOrder, TaskRow, fixture};
 
 fn id(u: Uuid) -> Id {
     Id::from_bytes(*u.as_bytes())
@@ -92,6 +92,15 @@ fn task_view(store: &Store, task: &Task, tz: &TimeZone) -> Result<TaskView, Stor
 }
 
 fn task_view_with(names: &Names, task: &Task, tz: &TimeZone) -> Result<TaskView, StoreError> {
+    task_view_at(names, task, 0, tz)
+}
+
+fn task_view_at(
+    names: &Names,
+    task: &Task,
+    depth: u32,
+    tz: &TimeZone,
+) -> Result<TaskView, StoreError> {
     let list = task.list_id.and_then(|l| {
         names.lists.get(&l).map(|title| ListView {
             id: uuid(l),
@@ -116,6 +125,7 @@ fn task_view_with(names: &Names, task: &Task, tz: &TimeZone) -> Result<TaskView,
         status: task.status.clone(),
         completed_at: task.completed_at,
         parent_id: task.parent_id.map(uuid),
+        depth,
         tags,
         recurrence: task.recurrence.clone(),
         created_at: task.created_at,
@@ -134,19 +144,41 @@ fn task_views(store: &Store, tasks: &[Task], tz: &TimeZone) -> Result<Vec<TaskVi
         .collect()
 }
 
+fn row_views(store: &Store, rows: &[TaskRow], tz: &TimeZone) -> Result<Vec<TaskView>, StoreError> {
+    let Some(first) = rows.first() else {
+        return Ok(Vec::new());
+    };
+    let names = Names::load(store, first.task.space_id)?;
+    rows.iter()
+        .map(|r| task_view_at(&names, &r.task, r.depth, tz))
+        .collect()
+}
+
+/// The windowed listing every list request ends in.
+fn query_window(inner: &Inner, store: &Store, q: &TaskQuery) -> Result<Response, IpcError> {
+    let filter = query_filter(inner, store, q)?;
+    let rows = store.task_rows(inner.space_id, &filter).map_err(error)?;
+    Ok(Response::Tasks(
+        row_views(store, &rows, &inner.tz).map_err(error)?,
+    ))
+}
+
 fn now(inner: &Inner) -> jiff::Zoned {
     Timestamp::now().to_zoned(inner.tz.clone())
 }
 
+/// Midnight `days_ahead` days from today in `now`'s zone (negative for
+/// days back), and the same for the day after it.
 fn day_bounds(now: &jiff::Zoned, days_ahead: i64) -> (i64, i64) {
-    let start = now.date().at(0, 0, 0, 0).to_zoned(now.time_zone().clone());
-    let start = start.map(|z| z.timestamp().as_millisecond()).unwrap_or(0);
-    let end = now
-        .date()
-        .checked_add(jiff::Span::new().days(days_ahead))
-        .and_then(|d| d.at(0, 0, 0, 0).to_zoned(now.time_zone().clone()))
-        .map(|z| z.timestamp().as_millisecond())
-        .unwrap_or(i64::MAX);
+    let at = |days: i64| -> Option<i64> {
+        now.date()
+            .checked_add(jiff::Span::new().days(days))
+            .ok()
+            .and_then(|d| d.at(0, 0, 0, 0).to_zoned(now.time_zone().clone()).ok())
+            .map(|z| z.timestamp().as_millisecond())
+    };
+    let start = at(days_ahead).unwrap_or(if days_ahead < 0 { i64::MIN } else { i64::MAX });
+    let end = at(days_ahead + 1).unwrap_or(i64::MAX);
     (start, end)
 }
 
@@ -265,53 +297,42 @@ fn dispatch(inner: &Inner, request: Request) -> Result<Response, IpcError> {
                 .map_err(error)?;
             Response::Tasks(task_views(store, &tasks, tz).map_err(error)?)
         }
-        Request::Today => {
-            let now = now(inner);
-            let (_, end) = day_bounds(&now, 1);
-            // Due today or overdue.
-            let tasks = store
-                .tasks(
-                    space,
-                    &TaskFilter {
-                        due_between: Some((i64::MIN, end)),
-                        ..Default::default()
-                    },
-                )
-                .map_err(error)?;
-            Response::Tasks(task_views(store, &tasks, tz).map_err(error)?)
+        Request::Today => query_window(
+            inner,
+            store,
+            &TaskQuery {
+                due_to_day: Some(1),
+                order: Some("due".into()),
+                ..Default::default()
+            },
+        )?,
+        Request::Upcoming { days } => query_window(
+            inner,
+            store,
+            &TaskQuery {
+                due_from_day: Some(1),
+                due_to_day: Some(1 + i64::from(days.clamp(1, 3650))),
+                order: Some("due".into()),
+                ..Default::default()
+            },
+        )?,
+        Request::ListTasks { list_id } => query_window(
+            inner,
+            store,
+            &TaskQuery {
+                list_id,
+                inbox: list_id.is_none(),
+                ..Default::default()
+            },
+        )?,
+        Request::Query(q) => query_window(inner, store, &q)?,
+        Request::Count(q) => {
+            let filter = query_filter(inner, store, &q)?;
+            Response::Count {
+                total: store.count(space, &filter).map_err(error)?,
+            }
         }
-        Request::Upcoming { days } => {
-            let now = now(inner);
-            let (_, start) = day_bounds(&now, 1);
-            let (_, end) = day_bounds(&now, 1 + i64::from(days.clamp(1, 3650)));
-            let tasks = store
-                .tasks(
-                    space,
-                    &TaskFilter {
-                        due_between: Some((start, end)),
-                        ..Default::default()
-                    },
-                )
-                .map_err(error)?;
-            Response::Tasks(task_views(store, &tasks, tz).map_err(error)?)
-        }
-        Request::ListTasks { list_id } => {
-            let tasks = store
-                .tasks(
-                    space,
-                    &TaskFilter {
-                        list: Some(list_id.map(id)),
-                        ..Default::default()
-                    },
-                )
-                .map_err(error)?;
-            Response::Tasks(task_views(store, &tasks, tz).map_err(error)?)
-        }
-        Request::Query(q) => {
-            let filter = query_filter(&q)?;
-            let tasks = store.tasks(space, &filter).map_err(error)?;
-            Response::Tasks(task_views(store, &tasks, tz).map_err(error)?)
-        }
+        Request::Statuses => Response::Statuses(store.statuses(space).map_err(error)?),
         Request::Reorder {
             id: task_id,
             after,
@@ -821,7 +842,7 @@ fn debug(inner: &Inner, store: &mut Store, request: DebugRequest) -> Result<Resp
     })
 }
 
-fn query_filter(q: &TaskQuery) -> Result<TaskFilter, IpcError> {
+fn query_filter(inner: &Inner, _store: &Store, q: &TaskQuery) -> Result<TaskFilter, IpcError> {
     let priority = match &q.priority {
         Some(p) => Some(parse_priority(p).ok_or_else(|| IpcError::Invalid {
             message: format!("unknown priority {p:?}"),
@@ -838,17 +859,32 @@ fn query_filter(q: &TaskQuery) -> Result<TaskFilter, IpcError> {
             });
         }
     };
+    // Day-relative bounds are resolved here, in the host's zone, and
+    // intersected with any absolute bounds.
+    let mut from = q.due_from;
+    let mut to = q.due_to;
+    if q.due_from_day.is_some() || q.due_to_day.is_some() {
+        let now = now(inner);
+        if let Some(d) = q.due_from_day {
+            let (start, _) = day_bounds(&now, d);
+            from = Some(from.map_or(start, |f| f.max(start)));
+        }
+        if let Some(d) = q.due_to_day {
+            let (end, _) = day_bounds(&now, d);
+            to = Some(to.map_or(end, |t| t.min(end)));
+        }
+    }
     Ok(TaskFilter {
         list: if q.inbox {
             Some(None)
         } else {
             q.list_id.map(|l| Some(id(l)))
         },
-        parent: None,
+        parent: q.parent_id.map(id),
         tag: q.tag_id.map(id),
         priority,
         status: q.status.clone(),
-        due_between: match (q.due_from, q.due_to) {
+        due_between: match (from, to) {
             (None, None) => None,
             (from, to) => Some((from.unwrap_or(i64::MIN), to.unwrap_or(i64::MAX))),
         },
@@ -857,6 +893,7 @@ fn query_filter(q: &TaskQuery) -> Result<TaskFilter, IpcError> {
         completed_only: q.completed_only,
         include_deleted: false,
         order,
+        offset: q.offset,
         limit: q.limit.min(100_000),
     })
 }

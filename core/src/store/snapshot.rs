@@ -184,6 +184,7 @@ pub(super) fn import(tx: &Transaction, snapshot: &Snapshot, now_ms: u64) -> Resu
     for task in &snapshot.state.tasks {
         insert_task(tx, task)?;
     }
+    super::apply::rebuild_outline(tx, space_id)?;
     for add in &snapshot.tag_adds {
         tx.prepare_cached(
             "INSERT OR IGNORE INTO task_tags (task_id, tag_id, add_id) VALUES (?1, ?2, ?3)",
