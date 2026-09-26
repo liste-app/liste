@@ -30,6 +30,7 @@
 pub mod crypto;
 pub mod fractional;
 pub mod hlc;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub mod host;
 pub mod ids;
 pub mod importers;

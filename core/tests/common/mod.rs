@@ -2,8 +2,8 @@
 
 #![allow(dead_code)]
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use liste_core::hlc::WallClock;
 use liste_core::ids::Id;
@@ -34,24 +34,24 @@ pub fn temp_dir(label: &str) -> std::path::PathBuf {
 
 /// A wall clock the test advances by hand.
 #[derive(Clone)]
-pub struct FakeWall(pub Rc<Cell<u64>>);
+pub struct FakeWall(pub Arc<AtomicU64>);
 
 impl WallClock for FakeWall {
     fn now_ms(&self) -> u64 {
-        self.0.get()
+        self.0.load(Ordering::SeqCst)
     }
 }
 
 /// A simulated device: an in-memory store with a controllable wall clock.
 pub struct Device {
     pub store: Store,
-    pub wall: Rc<Cell<u64>>,
+    pub wall: Arc<AtomicU64>,
 }
 
 impl Device {
     /// Device `n` with its wall clock at `start_ms`.
     pub fn new(n: u8, start_ms: u64) -> Device {
-        let wall = Rc::new(Cell::new(start_ms));
+        let wall = Arc::new(AtomicU64::new(start_ms));
         let store = Store::open_with_clock(
             None,
             Id::from_bytes([n; 16]),
@@ -62,7 +62,7 @@ impl Device {
     }
 
     pub fn advance(&self, ms: u64) {
-        self.wall.set(self.wall.get() + ms);
+        self.wall.fetch_add(ms, Ordering::SeqCst);
     }
 
     pub fn set(

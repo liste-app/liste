@@ -12,7 +12,6 @@ publish.workspace = true
 crate-type = ["lib"]
 
 [dependencies]
-liste-ipc.workspace = true
 rusqlite.workspace = true
 chacha20poly1305.workspace = true
 x25519-dalek.workspace = true
@@ -37,6 +36,11 @@ toml = "=1.1.6"
 # unsupported for persistence; no IndexedDB VFS is used or reintroduced.
 # rusqlite 0.39 pulls in sqlite-wasm-rs 0.5; the matching VFS crate is
 # sqlite-wasm-vfs 0.2. Only its sahpool VFS is registered.
+# The host (Section 3) exists only where a host process does: desktop.
+# Mobile and web link the core in-process and have no IPC.
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+liste-ipc.workspace = true
+
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 sqlite-wasm-vfs = "0.2"
 # The RustCrypto crates draw randomness through getrandom, which needs the

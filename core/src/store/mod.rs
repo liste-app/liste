@@ -32,7 +32,7 @@ use crate::op::{DecodeError, Mutation, Op, SCHEMA_VERSION};
 use crate::undo::{Inverse, UndoStack};
 
 pub use capture::{Captured, Completed};
-pub use query::{SpaceState, TaskFilter};
+pub use query::{LoggedOp, SpaceState, TaskFilter};
 pub use snapshot::Snapshot;
 
 /// Errors from the store.
@@ -76,7 +76,7 @@ pub enum Applied {
     Skipped,
 }
 
-impl WallClock for Box<dyn WallClock> {
+impl WallClock for Box<dyn WallClock + Send> {
     fn now_ms(&self) -> u64 {
         (**self).now_ms()
     }
@@ -85,7 +85,7 @@ impl WallClock for Box<dyn WallClock> {
 /// The device's store. One per device; on desktop only the host holds it.
 pub struct Store {
     conn: Connection,
-    clock: HlcClock<Box<dyn WallClock>>,
+    clock: HlcClock<Box<dyn WallClock + Send>>,
     undo: UndoStack,
     supported_schema: u32,
     locked: bool,
@@ -112,7 +112,7 @@ impl Store {
     pub fn open_with_clock(
         path: Option<&Path>,
         device: Id,
-        wall: Box<dyn WallClock>,
+        wall: Box<dyn WallClock + Send>,
     ) -> Result<Store> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
@@ -387,6 +387,24 @@ impl Store {
     /// How many ops the log holds for the space.
     pub fn op_count(&self, space_id: Id) -> Result<u64> {
         query::op_count(&self.conn, space_id)
+    }
+
+    /// The most recent ops in the log, newest first, with their sync state.
+    pub fn recent_ops(&self, space_id: Id, limit: usize) -> Result<Vec<LoggedOp>> {
+        self.check_unlocked()?;
+        query::recent_ops(&self.conn, space_id, limit)
+    }
+
+    /// How many ops are not yet acknowledged by the server.
+    pub fn pending_count(&self, space_id: Id) -> Result<u64> {
+        query::pending_count(&self.conn, space_id)
+    }
+
+    /// Fold the write-ahead log into the database. The host runs this on a
+    /// background thread so writes never pay for it.
+    pub fn checkpoint(&self) -> Result<()> {
+        self.conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE)")?;
+        Ok(())
     }
 
     /// Read one op back from the log.
