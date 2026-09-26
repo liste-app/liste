@@ -65,11 +65,11 @@ struct MainView: View {
         case "undo": session.undo()
         case "redo": session.redo()
         case "complete":
-            if let task = session.tasks.first(where: { $0.id == ui.selectedTaskId }) {
+            if let task = session.find(ui.selectedTaskId) {
                 session.setCompleted(task, task.completedAt == nil)
             }
         case "delete":
-            if let task = session.tasks.first(where: { $0.id == ui.selectedTaskId }) { session.delete(task) }
+            if let task = session.find(ui.selectedTaskId) { session.delete(task) }
         case "new-filter": ui.showFilterBuilder = true
         case "settings": NotificationCenter.default.post(name: .settingsRequested, object: nil)
         default: break
@@ -125,12 +125,12 @@ struct MainView: View {
         case .list(let id): session.lists.first { $0.id == id }?.title ?? "List"
         case .tag(let id): "#" + (session.tags.first { $0.id == id }?.name ?? "tag")
         case .search(let q): q.isEmpty ? "Search" : "Search: \(q)"
-        case .filter(let f): f.name
+        case .filter(let id): session.filters.first { $0.id == id }?.name ?? "Filter"
         }
     }
 
     private var subtitle: String {
-        let n = session.tasks.count
+        let n = session.count
         return n == 1 ? "1 task" : "\(n) tasks"
     }
 

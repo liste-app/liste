@@ -10,7 +10,7 @@ struct Inspector: View {
     @Bindable var ui: UIState
 
     var body: some View {
-        if let task = session.tasks.first(where: { $0.id == ui.selectedTaskId }) ?? (ui.selectedTaskId.flatMap { try? session.task(id: $0) }) {
+        if let task = session.find(ui.selectedTaskId) {
             InspectorForm(task: task, session: session)
                 .id(task.id)
         } else {
@@ -105,8 +105,15 @@ struct InspectorForm: View {
                             }
                     }
                 }
+                // Candidates are the loaded top-level rows, plus the current
+                // parent so the picker always shows it.
                 Picker("Parent", selection: Binding(get: { task.parentId ?? "" }, set: { session.setParent(task, $0.isEmpty ? nil : $0) })) {
                     Text("None").tag("")
+                    if let parentId = task.parentId, !session.tasks.contains(where: { $0.id == parentId }),
+                        let parent = session.find(parentId)
+                    {
+                        Text(parent.title).tag(parent.id)
+                    }
                     ForEach(session.tasks.filter { $0.id != task.id && $0.parentId == nil }, id: \.id) { candidate in
                         Text(candidate.title).tag(candidate.id)
                     }
@@ -124,7 +131,7 @@ struct InspectorForm: View {
                         }
                     }
             }
-            let subtasks = session.tasks.filter { $0.parentId == task.id }
+            let subtasks = task.hasSubtasks ? session.subtasks(of: task) : []
             if !subtasks.isEmpty {
                 Section("Subtasks") {
                     ForEach(subtasks, id: \.id) { sub in
