@@ -656,3 +656,24 @@ fn every_filter_field_round_trips_and_undo_removes_a_new_filter() {
     assert!(store.redo().unwrap());
     assert_eq!(store.filters(space).unwrap()[0].name, "Errands soon");
 }
+
+/// The count and the windows a virtualized list asks for come off the
+/// partial indexes: no table rows are read for filtering and no sort runs.
+#[test]
+fn window_plans_come_off_the_partial_indexes() {
+    let mut store = Store::open_in_memory(Id::new()).unwrap();
+    let space = Id::new();
+    fixture::populate(&mut store, space, 500, 1).unwrap();
+    let plans = store.window_plan(space).unwrap();
+    let expect = [
+        "USING INDEX tasks_space_status_open (space_id=?)",
+        "USING INDEX tasks_space_open (space_id=?)",
+        "USING INDEX tasks_space_list_open (space_id=? AND list_id=?)",
+        "USING INDEX tasks_space_due_open (space_id=? AND due_at>? AND due_at<?)",
+        "USING INDEX tasks_space_status_open (space_id=?)",
+    ];
+    for (plan, expected) in plans.iter().zip(expect) {
+        assert!(plan.contains(expected), "expected {expected} in:\n{plan}");
+        assert!(!plan.contains("TEMP B-TREE"), "no sort step in:\n{plan}");
+    }
+}

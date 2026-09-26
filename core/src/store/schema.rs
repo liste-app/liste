@@ -145,14 +145,22 @@ pub const MIGRATIONS: &[&str] = &[
     // of a manual-order list comes straight off an index with subtasks
     // under their parents; `depth` is the number of ancestors. Both are
     // derived from `position` and `parent_id` and maintained by apply.
-    // The partial index covers the common "open tasks" window and count.
+    // The partial indexes cover the open-task windows and counts (manual
+    // order, one list, a due range), each ending in `id` so a window's
+    // order comes off the index with no sort. The narrow status index is
+    // last on purpose: the planner takes the latest of equally usable
+    // partial indexes, and the plain count should read the narrowest.
     r#"
     ALTER TABLE tasks ADD COLUMN sort_key TEXT NOT NULL DEFAULT 'V';
     ALTER TABLE tasks ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
-    CREATE INDEX tasks_space_sort ON tasks (space_id, sort_key);
-    CREATE INDEX tasks_space_open ON tasks (space_id, sort_key)
+    CREATE INDEX tasks_space_sort ON tasks (space_id, sort_key, id);
+    CREATE INDEX tasks_space_open ON tasks (space_id, sort_key, id)
         WHERE completed_at IS NULL AND deleted_at IS NULL;
-    CREATE INDEX tasks_space_list_open ON tasks (space_id, list_id, sort_key)
+    CREATE INDEX tasks_space_list_open ON tasks (space_id, list_id, sort_key, id)
+        WHERE completed_at IS NULL AND deleted_at IS NULL;
+    CREATE INDEX tasks_space_due_open ON tasks (space_id, due_at, sort_key, id)
+        WHERE completed_at IS NULL AND deleted_at IS NULL;
+    CREATE INDEX tasks_space_status_open ON tasks (space_id, status)
         WHERE completed_at IS NULL AND deleted_at IS NULL;
     CREATE TEMP TABLE outline AS
         WITH RECURSIVE walk(id, key, depth) AS (

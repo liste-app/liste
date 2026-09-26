@@ -506,7 +506,7 @@ impl Store {
         query::task_rows(&self.conn, space_id, filter)
     }
 
-    /// Every status name on a live task in the space, `open` first.
+    /// Every status name on an open task in the space, `open` first.
     pub fn statuses(&self, space_id: Id) -> Result<Vec<String>> {
         self.check_unlocked()?;
         query::statuses(&self.conn, space_id)
@@ -590,5 +590,11 @@ impl Store {
     #[doc(hidden)]
     pub fn search_plan(&self) -> Result<Vec<String>> {
         query::search_plan(&self.conn)
+    }
+
+    /// The query plan for the open-task count and window in a space.
+    #[doc(hidden)]
+    pub fn window_plan(&self, space_id: Id) -> Result<Vec<String>> {
+        query::window_plan(&self.conn, space_id)
     }
 }

@@ -342,11 +342,12 @@ fn where_clause(space_id: Id, filter: &TaskFilter) -> (String, Vec<Box<dyn rusql
     (where_sql, args)
 }
 
-/// Status names in use on live tasks: `open` first, then the rest by name.
+/// Status names in use on open tasks: `open` first, then the rest by name.
 pub(super) fn statuses(conn: &Connection, space_id: Id) -> Result<Vec<String>> {
     let mut names: Vec<String> = conn
         .prepare_cached(
-            "SELECT DISTINCT status FROM tasks WHERE space_id = ?1 AND deleted_at IS NULL
+            "SELECT DISTINCT status FROM tasks
+             WHERE space_id = ?1 AND completed_at IS NULL AND deleted_at IS NULL
              ORDER BY status",
         )?
         .query_map(params![space_id], |r| r.get(0))?
@@ -384,6 +385,8 @@ pub(super) fn task_rows(
     let (where_sql, args) = where_clause(space_id, filter);
     let order = match filter.order {
         TaskOrder::Manual => "sort_key, id",
+        // A due range excludes undated tasks, so the order is the index's.
+        TaskOrder::DueThenManual if filter.due_between.is_some() => "due_at, sort_key, id",
         TaskOrder::DueThenManual => "due_at IS NULL, due_at, sort_key, id",
         TaskOrder::CompletedDesc => "completed_at DESC, id",
     };
@@ -502,6 +505,24 @@ pub(super) fn search(
         .collect::<rusqlite::Result<_>>()?;
     fill_tags(conn, &mut tasks)?;
     Ok(tasks)
+}
+
+pub(super) fn window_plan(conn: &Connection, space_id: Id) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    for sql in [
+        "SELECT count(*) FROM tasks WHERE tasks.space_id = ?1 AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL",
+        "SELECT id FROM tasks WHERE tasks.space_id = ?1 AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL ORDER BY sort_key, id LIMIT 10 OFFSET 5",
+        "SELECT count(*) FROM tasks WHERE tasks.space_id = ?1 AND tasks.list_id = ?1 AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL",
+        "SELECT id FROM tasks WHERE tasks.space_id = ?1 AND tasks.due_at >= 1 AND tasks.due_at < 5 AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL ORDER BY due_at, sort_key, id LIMIT 10",
+        "SELECT DISTINCT status FROM tasks WHERE space_id = ?1 AND completed_at IS NULL AND deleted_at IS NULL ORDER BY status",
+    ] {
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+        let rows: Vec<String> = stmt
+            .query_map(params![space_id], |r| r.get::<_, String>(3))?
+            .collect::<rusqlite::Result<_>>()?;
+        out.push(format!("{sql}\n    {}", rows.join("\n    ")));
+    }
+    Ok(out)
 }
 
 pub(super) fn search_plan(conn: &Connection) -> Result<Vec<String>> {

@@ -72,7 +72,7 @@ pub enum Request {
     /// How many tasks a query matches, ignoring its window. A list asks
     /// this once, then fetches only the rows on screen.
     Count(TaskQuery),
-    /// Every status name in use, for board columns.
+    /// Every status name on an open task, for board columns.
     Statuses,
     /// Move a task in manual order to sit between two neighbours; either
     /// may be absent for the ends.
