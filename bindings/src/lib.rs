@@ -22,6 +22,7 @@ mod native {
 
     use liste_core::host::{Host, HostConfig, HostError};
     use liste_core::parse::Locale;
+    use liste_ipc::protocol::{DebugRequest, TagView, TaskQuery};
     use liste_ipc::protocol::{IpcError, Request, Response};
     use liste_ipc::{Endpoint, ListView, PreviewView, SpanView, TaskView};
 
@@ -72,9 +73,11 @@ mod native {
         /// The due date rendered in the host's zone, for display.
         pub due: Option<String>,
         pub due_all_day: bool,
+        pub reminder_at: Option<i64>,
         pub priority: String,
         pub status: String,
         pub completed_at: Option<i64>,
+        pub parent_id: Option<String>,
         pub tags: Vec<String>,
         pub recurrence: Option<String>,
         pub created_at: i64,
@@ -92,9 +95,11 @@ mod native {
                 due_at: t.due_at,
                 due: t.due,
                 due_all_day: t.due_all_day,
+                reminder_at: t.reminder_at,
                 priority: t.priority,
                 status: t.status,
                 completed_at: t.completed_at,
+                parent_id: t.parent_id.map(|p| p.to_string()),
                 tags: t.tags,
                 recurrence: t.recurrence,
                 created_at: t.created_at,
@@ -116,6 +121,51 @@ mod native {
                 title: l.title,
             }
         }
+    }
+
+    #[derive(Debug, Clone, uniffi::Record)]
+    pub struct Tag {
+        pub id: String,
+        pub name: String,
+    }
+
+    impl From<TagView> for Tag {
+        fn from(t: TagView) -> Self {
+            Tag {
+                id: t.id.to_string(),
+                name: t.name,
+            }
+        }
+    }
+
+    /// A filter over tasks; absent fields do not filter. `order` is
+    /// `manual`, `due`, or `completed`.
+    #[derive(Debug, Clone, Default, uniffi::Record)]
+    pub struct Query {
+        #[uniffi(default = None)]
+        pub list_id: Option<String>,
+        #[uniffi(default = false)]
+        pub inbox: bool,
+        #[uniffi(default = None)]
+        pub tag_id: Option<String>,
+        #[uniffi(default = None)]
+        pub priority: Option<String>,
+        #[uniffi(default = None)]
+        pub status: Option<String>,
+        #[uniffi(default = None)]
+        pub due_from: Option<i64>,
+        #[uniffi(default = None)]
+        pub due_to: Option<i64>,
+        #[uniffi(default = false)]
+        pub has_reminder: bool,
+        #[uniffi(default = false)]
+        pub include_completed: bool,
+        #[uniffi(default = false)]
+        pub completed_only: bool,
+        #[uniffi(default = None)]
+        pub order: Option<String>,
+        #[uniffi(default = 0)]
+        pub limit: u32,
     }
 
     /// A byte range of the captured text that was interpreted. Offsets are
@@ -179,13 +229,29 @@ mod native {
     /// name and an empty string moves the task to the inbox.
     #[derive(Debug, Clone, Default, uniffi::Record)]
     pub struct TaskPatch {
+        #[uniffi(default = None)]
         pub title: Option<String>,
+        #[uniffi(default = None)]
         pub notes: Option<String>,
+        #[uniffi(default = None)]
         pub due: Option<String>,
+        #[uniffi(default = None)]
         pub priority: Option<String>,
+        #[uniffi(default = None)]
         pub list: Option<String>,
+        #[uniffi(default = [])]
         pub add_tags: Vec<String>,
+        #[uniffi(default = [])]
         pub remove_tags: Vec<String>,
+        /// A status name for kanban columns.
+        #[uniffi(default = None)]
+        pub status: Option<String>,
+        /// A parent task id; an empty string makes the task top-level.
+        #[uniffi(default = None)]
+        pub parent: Option<String>,
+        /// A reminder as natural-language time; an empty string clears it.
+        #[uniffi(default = None)]
+        pub reminder: Option<String>,
     }
 
     #[derive(Debug, Clone, uniffi::Record)]
@@ -395,8 +461,101 @@ mod native {
                     list: patch.list,
                     add_tags: patch.add_tags,
                     remove_tags: patch.remove_tags,
+                    status: patch.status,
+                    parent: patch.parent,
+                    reminder: patch.reminder,
                 },
             })?)
+        }
+
+        /// Any combination of filters: smart lists, tags, saved filters.
+        pub fn query(&self, query: Query) -> Result<Vec<TaskItem>, ListeError> {
+            tasks(self.handle(Request::Query(TaskQuery {
+                list_id: query.list_id.as_deref().map(uuid).transpose()?,
+                inbox: query.inbox,
+                tag_id: query.tag_id.as_deref().map(uuid).transpose()?,
+                priority: query.priority,
+                status: query.status,
+                due_from: query.due_from,
+                due_to: query.due_to,
+                has_reminder: query.has_reminder,
+                include_completed: query.include_completed,
+                completed_only: query.completed_only,
+                order: query.order,
+                limit: query.limit as usize,
+            }))?)
+        }
+
+        /// Move a task in manual order to sit after `after` and before
+        /// `before`; either may be absent for an end of the list.
+        pub fn reorder(
+            &self,
+            id: String,
+            after: Option<String>,
+            before: Option<String>,
+        ) -> Result<TaskItem, ListeError> {
+            task(self.handle(Request::Reorder {
+                id: uuid(&id)?,
+                after: after.as_deref().map(uuid).transpose()?,
+                before: before.as_deref().map(uuid).transpose()?,
+            })?)
+        }
+
+        /// Tombstone a task. Undo restores it.
+        pub fn delete(&self, id: String) -> Result<(), ListeError> {
+            self.handle(Request::Delete { id: uuid(&id)? })?;
+            Ok(())
+        }
+
+        pub fn tags(&self) -> Result<Vec<Tag>, ListeError> {
+            match self.handle(Request::Tags)? {
+                Response::Tags(t) => Ok(t.into_iter().map(Into::into).collect()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        pub fn create_list(&self, title: String) -> Result<TaskList, ListeError> {
+            match self.handle(Request::CreateList { title })? {
+                Response::List(l) => Ok(l.into()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Rename a list and/or move it between two neighbours.
+        pub fn update_list(
+            &self,
+            id: String,
+            title: Option<String>,
+            after: Option<String>,
+            before: Option<String>,
+        ) -> Result<TaskList, ListeError> {
+            match self.handle(Request::UpdateList {
+                id: uuid(&id)?,
+                title,
+                after: after.as_deref().map(uuid).transpose()?,
+                before: before.as_deref().map(uuid).transpose()?,
+            })? {
+                Response::List(l) => Ok(l.into()),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
+        }
+
+        /// Delete a list; its tasks move to the inbox.
+        pub fn delete_list(&self, id: String) -> Result<(), ListeError> {
+            self.handle(Request::DeleteList { id: uuid(&id)? })?;
+            Ok(())
+        }
+
+        /// Fill the store with the fixture, for benches and the acceptance
+        /// driver. Returns the number of tasks created.
+        pub fn populate_fixture(&self, tasks: u32, seed: u64) -> Result<u32, ListeError> {
+            match self.handle(Request::Debug(DebugRequest::Fixture {
+                tasks: tasks as usize,
+                seed,
+            }))? {
+                Response::Fixture { tasks, .. } => Ok(tasks as u32),
+                other => Err(ListeError::Internal(format!("unexpected reply {other:?}"))),
+            }
         }
 
         pub fn complete(&self, id: String) -> Result<TaskItem, ListeError> {
