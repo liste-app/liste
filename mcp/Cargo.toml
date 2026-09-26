@@ -1,0 +1,19 @@
+[package]
+name = "liste-mcp"
+description = "Liste local MCP server: stdio transport forwarding to the host over IPC"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "liste-mcp"
+path = "src/main.rs"
+
+[dependencies]
+liste-ipc.workspace = true
+serde.workspace = true
+serde_json.workspace = true

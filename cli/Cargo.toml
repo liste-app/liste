@@ -1,0 +1,20 @@
+[package]
+name = "liste-cli"
+description = "The `liste` command-line tool (IPC client) and `liste daemon` (headless host)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "liste"
+path = "src/main.rs"
+
+[dependencies]
+liste-ipc.workspace = true
+# The core is linked only for `liste daemon`, which is a host, not a client.
+liste-core.workspace = true
+clap.workspace = true

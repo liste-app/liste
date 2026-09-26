@@ -1,0 +1,24 @@
+[package]
+name = "liste-server"
+description = "Liste sync server: encrypted op ingest and ordering, snapshots, auth, devices, push"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "liste-server"
+path = "src/main.rs"
+
+[dependencies]
+liste-core.workspace = true
+axum.workspace = true
+tokio.workspace = true
+sqlx.workspace = true
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

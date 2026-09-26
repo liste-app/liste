@@ -1,0 +1,31 @@
+[package]
+name = "liste-bindings"
+description = "Liste foreign bindings: UniFFI scaffolding for Swift, Kotlin, and C#, plus the WASM wrapper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[lib]
+name = "liste_bindings"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[features]
+default = []
+# Builds the `uniffi-bindgen` binary used to generate Swift and Kotlin bindings.
+cli = ["uniffi/cli"]
+
+[dependencies]
+liste-core.workspace = true
+uniffi.workspace = true
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+wasm-bindgen.workspace = true
