@@ -20,6 +20,7 @@
 		A2000001000000000000B2B1 /* Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B2F1 /* Sidebar.swift */; };
 		A2000001000000000000B3B1 /* TaskListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B3F1 /* TaskListView.swift */; };
 		A2000001000000000000BAB1 /* TaskTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000BAF1 /* TaskTable.swift */; };
+		A2000001000000000000BBB1 /* Board.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000BBF1 /* Board.swift */; };
 		A2000001000000000000B4B1 /* Inspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B4F1 /* Inspector.swift */; };
 		A2000001000000000000B5B1 /* BoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B5F1 /* BoardView.swift */; };
 		A2000001000000000000B6B1 /* FrameMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001000000000000B6F1 /* FrameMeter.swift */; };
@@ -43,6 +44,7 @@
 		A2000001000000000000B2F1 /* Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sidebar.swift; sourceTree = "<group>"; };
 		A2000001000000000000B3F1 /* TaskListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskListView.swift; sourceTree = "<group>"; };
 		A2000001000000000000BAF1 /* TaskTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskTable.swift; sourceTree = "<group>"; };
+		A2000001000000000000BBF1 /* Board.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Board.swift; sourceTree = "<group>"; };
 		A2000001000000000000B4F1 /* Inspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Inspector.swift; sourceTree = "<group>"; };
 		A2000001000000000000B5F1 /* BoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardView.swift; sourceTree = "<group>"; };
 		A2000001000000000000B6F1 /* FrameMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameMeter.swift; sourceTree = "<group>"; };
@@ -101,6 +103,7 @@
 				A2000001000000000000B2F1 /* Sidebar.swift */,
 				A2000001000000000000B3F1 /* TaskListView.swift */,
 				A2000001000000000000BAF1 /* TaskTable.swift */,
+				A2000001000000000000BBF1 /* Board.swift */,
 				A2000001000000000000B4F1 /* Inspector.swift */,
 				A2000001000000000000B5F1 /* BoardView.swift */,
 				A2000001000000000000B6F1 /* FrameMeter.swift */,
@@ -263,6 +266,7 @@
 				A2000001000000000000B2B1 /* Sidebar.swift in Sources */,
 				A2000001000000000000B3B1 /* TaskListView.swift in Sources */,
 				A2000001000000000000BAB1 /* TaskTable.swift in Sources */,
+				A2000001000000000000BBB1 /* Board.swift in Sources */,
 				A2000001000000000000B4B1 /* Inspector.swift in Sources */,
 				A2000001000000000000B5B1 /* BoardView.swift in Sources */,
 				A2000001000000000000B6B1 /* FrameMeter.swift in Sources */,

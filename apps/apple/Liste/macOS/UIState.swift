@@ -16,7 +16,9 @@ final class UIState {
 
     var selectedTaskId: String?
     var editingTaskId: String?
-    var viewMode: ViewMode = .list
+    var viewMode: ViewMode = ViewMode(rawValue: Preferences.viewMode) ?? .list {
+        didSet { Preferences.viewMode = viewMode.rawValue }
+    }
     var showInspector = false
     var searchFocusRequest = 0
     var newTaskRequest = 0
