@@ -834,9 +834,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "rand_core",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1241,6 +1243,7 @@ version = "0.1.0"
 dependencies = [
  "chacha20poly1305",
  "ed25519-dalek",
+ "getrandom 0.4.3",
  "hkdf",
  "liste-ipc",
  "rusqlite",
