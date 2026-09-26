@@ -71,6 +71,37 @@ fn fill_tags(conn: &Connection, tasks: &mut [Task]) -> Result<()> {
     Ok(())
 }
 
+/// Fill tags for many tasks with one query: every tag row whose task
+/// satisfies `where_sql` (a predicate over the `tasks` table with the given
+/// positional `args`), merged into `tasks` by id.
+fn fill_tags_where(
+    conn: &Connection,
+    tasks: &mut [Task],
+    where_sql: &str,
+    args: &[Box<dyn rusqlite::ToSql>],
+) -> Result<()> {
+    let sql = format!(
+        "SELECT DISTINCT tt.task_id, tt.tag_id FROM task_tags tt
+         JOIN tasks ON tasks.id = tt.task_id WHERE {where_sql}
+         ORDER BY tt.task_id, tt.tag_id"
+    );
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let mut by_task: std::collections::HashMap<Id, Vec<Id>> = std::collections::HashMap::new();
+    let rows = stmt.query_map(rusqlite::params_from_iter(args.iter()), |r| {
+        Ok((r.get::<_, Id>(0)?, r.get::<_, Id>(1)?))
+    })?;
+    for row in rows {
+        let (task, tag) = row?;
+        by_task.entry(task).or_default().push(tag);
+    }
+    for task in tasks {
+        if let Some(tags) = by_task.remove(&task.id) {
+            task.tags = tags;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn tag_adds(conn: &Connection, task: Id, tag: Id) -> Result<Vec<Id>> {
     Ok(conn
         .prepare_cached(
@@ -169,33 +200,34 @@ pub(super) fn task(conn: &Connection, id: Id) -> Result<Option<Task>> {
 }
 
 pub(super) fn tasks(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Result<Vec<Task>> {
-    let mut sql = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE space_id = ?1");
+    let mut where_sql = String::from("tasks.space_id = ?1");
     let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(space_id)];
     match filter.list {
-        Some(None) => sql.push_str(" AND list_id IS NULL"),
+        Some(None) => where_sql.push_str(" AND tasks.list_id IS NULL"),
         Some(Some(list)) => {
             args.push(Box::new(list));
-            sql.push_str(&format!(" AND list_id = ?{}", args.len()));
+            where_sql.push_str(&format!(" AND tasks.list_id = ?{}", args.len()));
         }
         None => {}
     }
     if let Some(parent) = filter.parent {
         args.push(Box::new(parent));
-        sql.push_str(&format!(" AND parent_id = ?{}", args.len()));
+        where_sql.push_str(&format!(" AND tasks.parent_id = ?{}", args.len()));
     }
     if let Some((from, to)) = filter.due_between {
         args.push(Box::new(from));
-        sql.push_str(&format!(" AND due_at >= ?{}", args.len()));
+        where_sql.push_str(&format!(" AND tasks.due_at >= ?{}", args.len()));
         args.push(Box::new(to));
-        sql.push_str(&format!(" AND due_at < ?{}", args.len()));
+        where_sql.push_str(&format!(" AND tasks.due_at < ?{}", args.len()));
     }
     if !filter.include_completed {
-        sql.push_str(" AND completed_at IS NULL");
+        where_sql.push_str(" AND tasks.completed_at IS NULL");
     }
     if !filter.include_deleted {
-        sql.push_str(" AND deleted_at IS NULL");
+        where_sql.push_str(" AND tasks.deleted_at IS NULL");
     }
-    sql.push_str(" ORDER BY position, id");
+    let mut sql =
+        format!("SELECT {TASK_COLUMNS} FROM tasks WHERE {where_sql} ORDER BY position, id");
     if filter.limit > 0 {
         sql.push_str(&format!(" LIMIT {}", filter.limit));
     }
@@ -203,7 +235,11 @@ pub(super) fn tasks(conn: &Connection, space_id: Id, filter: &TaskFilter) -> Res
     let mut tasks: Vec<Task> = stmt
         .query_map(rusqlite::params_from_iter(args.iter()), task_from_row)?
         .collect::<rusqlite::Result<_>>()?;
-    fill_tags(conn, &mut tasks)?;
+    if filter.limit > 0 && tasks.len() >= filter.limit {
+        fill_tags(conn, &mut tasks)?;
+    } else {
+        fill_tags_where(conn, &mut tasks, &where_sql, &args)?;
+    }
     Ok(tasks)
 }
 
@@ -216,6 +252,14 @@ fn fts_query(text: &str) -> String {
         .join(" ")
 }
 
+/// Results are newest first (by row id), not by relevance rank: ranking
+/// every match before applying the limit is what makes a one-letter query
+/// slow against a large database, while a rowid-ordered scan stops after
+/// `limit` rows. A relevance rank for longer queries is a later refinement.
+///
+/// `CROSS JOIN` pins the join order: the FTS scan drives and each hit is a
+/// primary-key lookup. Left to itself, the bundled SQLite starts from the
+/// `tasks` index and probes FTS once per task, which is quadratic.
 pub(super) fn search(
     conn: &Connection,
     space_id: Id,
@@ -227,11 +271,15 @@ pub(super) fn search(
         return Ok(Vec::new());
     }
     let mut stmt = conn.prepare_cached(&format!(
-        "SELECT {TASK_COLUMNS} FROM tasks t
-         WHERE t.rid IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH ?1 ORDER BY rank)
-           AND t.space_id = ?2 AND t.deleted_at IS NULL
-         ORDER BY t.completed_at IS NOT NULL, t.modified_at DESC
-         LIMIT ?3"
+        "SELECT {} FROM tasks_fts f CROSS JOIN tasks t ON t.rid = f.rowid
+         WHERE f.tasks_fts MATCH ?1 AND t.space_id = ?2 AND t.deleted_at IS NULL
+         ORDER BY f.rowid DESC
+         LIMIT ?3",
+        TASK_COLUMNS
+            .split(',')
+            .map(|c| format!("t.{}", c.trim()))
+            .collect::<Vec<_>>()
+            .join(", ")
     ))?;
     let mut tasks: Vec<Task> = stmt
         .query_map(params![query, space_id, limit as i64], task_from_row)?
@@ -259,7 +307,8 @@ pub(super) fn space_state(conn: &Connection, space_id: Id) -> Result<SpaceState>
         ))?
         .query_map(params![space_id], task_from_row)?
         .collect::<rusqlite::Result<_>>()?;
-    fill_tags(conn, &mut tasks)?;
+    let args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(space_id)];
+    fill_tags_where(conn, &mut tasks, "tasks.space_id = ?1", &args)?;
     Ok(SpaceState {
         space: space(conn, space_id)?,
         lists,
