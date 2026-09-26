@@ -1,6 +1,8 @@
-//! Shared bench plumbing: a file-backed store with the large fixture, and
-//! percentile reporting. Numbers are reported, not yet enforced; thresholds
-//! come once real numbers exist (Section 15).
+//! Shared bench plumbing: a file-backed store with the large fixture,
+//! percentile reporting, and threshold checks (Section 15: benches fail on
+//! regression). Thresholds are enforced only in optimized builds; a debug
+//! build reports and passes, so `cargo test --benches` never fails on
+//! timing.
 
 #![allow(dead_code)]
 
@@ -75,6 +77,19 @@ impl Stats {
         s[idx]
     }
 
+    /// Report, and record a failure if the p95 exceeds `p95_limit`.
+    pub fn check(&self, name: &str, p95_limit: Duration, failures: &mut Vec<String>) {
+        self.report(name);
+        let p95 = self.pct(0.95);
+        if p95 > p95_limit {
+            failures.push(format!(
+                "{name}: p95 {:.1}µs exceeds {:.1}µs",
+                p95.as_secs_f64() * 1e6,
+                p95_limit.as_secs_f64() * 1e6
+            ));
+        }
+    }
+
     pub fn report(&self, name: &str) {
         let mean = self.samples.iter().sum::<Duration>() / self.samples.len() as u32;
         println!(
@@ -87,4 +102,20 @@ impl Stats {
             mean.as_secs_f64() * 1e6,
         );
     }
+}
+
+/// Exit non-zero if any threshold was exceeded, in optimized builds only.
+pub fn finish(failures: Vec<String>) {
+    if failures.is_empty() {
+        println!("bench: all thresholds met");
+        return;
+    }
+    for f in &failures {
+        println!("bench: FAIL {f}");
+    }
+    if cfg!(debug_assertions) {
+        println!("bench: debug build, thresholds not enforced");
+        return;
+    }
+    std::process::exit(1);
 }

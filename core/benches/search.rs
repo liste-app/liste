@@ -1,7 +1,12 @@
 //! Keystroke search (Section 4): every prefix of a query, against the
 //! large fixture, must return quickly enough to run on each keystroke.
+//!
+//! Thresholds (p95): any keystroke 2 ms; materializing one list of about
+//! 2,000 live tasks 16 ms.
 
 mod common;
+
+use std::time::Duration;
 
 fn main() {
     let (store, fx) = common::populated("search");
@@ -14,6 +19,7 @@ fn main() {
         "xylophone",
     ];
 
+    let mut failures = Vec::new();
     let mut warm = common::Stats::new();
     for q in queries {
         warm.time(|| store.search(space, q, 50).unwrap());
@@ -35,8 +41,16 @@ fn main() {
             }
         }
     }
-    first_char.report("search, single-character prefix");
-    per_keystroke.report("search, later keystrokes");
+    first_char.check(
+        "search, single-character prefix",
+        Duration::from_millis(2),
+        &mut failures,
+    );
+    per_keystroke.check(
+        "search, later keystrokes",
+        Duration::from_millis(2),
+        &mut failures,
+    );
     println!("total hits across runs: {hits_total}");
 
     // Listing a list's tasks in manual order, as the main view does.
@@ -54,5 +68,10 @@ fn main() {
                 .unwrap()
         });
     }
-    listing.report("list view (one list, all live tasks)");
+    listing.check(
+        "list view (one list, all live tasks)",
+        Duration::from_millis(16),
+        &mut failures,
+    );
+    common::finish(failures);
 }
