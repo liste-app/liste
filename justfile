@@ -72,6 +72,23 @@ bindings-swift:
         generate --library target/release/libliste_bindings.dylib \
         --language swift --out-dir bindings/generated/swift
 
+# Build the core for macOS, generate the Swift bindings, and package the
+# XCFramework the Xcode project links.
+apple-bindings:
+    bindings/build-apple.sh
+
+# Build the macOS app (after apple-bindings).
+apple-build:
+    cd apps/apple && DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
+        xcodebuild -project Liste.xcodeproj -scheme Liste -configuration Debug \
+        -derivedDataPath build build CODE_SIGNING_ALLOWED=NO | tail -3
+
+# Run the Apple acceptance driver and the ListeKit tests (after apple-bindings).
+# The driver runs the `liste` binary as the other client, so it is built first.
+apple-test:
+    cargo build -p liste-cli
+    cd apps/apple/ListeKit && DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" swift test
+
 # Start the web app dev server (once apps/web exists).
 web-dev:
     cd apps/web && pnpm install && pnpm dev

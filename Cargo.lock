@@ -1518,7 +1518,10 @@ name = "liste-bindings"
 version = "0.1.0"
 dependencies = [
  "liste-core",
+ "liste-ipc",
+ "thiserror",
  "uniffi",
+ "uuid",
  "wasm-bindgen",
 ]
 

@@ -17,6 +17,8 @@ pnpm-debug.log*
 
 # Generated bindings (produced at build time, never committed)
 /bindings/generated/
+/apps/apple/ListeKit/Sources/ListeCore/ListeCore.swift
+/apps/apple/build/
 
 # Xcode / Apple
 DerivedData/
