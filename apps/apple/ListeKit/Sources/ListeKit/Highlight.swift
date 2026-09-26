@@ -7,17 +7,9 @@ import Foundation
 import ListeCore
 import SwiftUI
 
-/// The highlight color for one kind of interpreted span.
+/// The highlight color for one kind of interpreted span, from the tokens.
 public func highlightColor(for kind: String) -> Color {
-    switch kind {
-    case "date": .blue
-    case "time": .teal
-    case "list": .purple
-    case "tag": .green
-    case "priority": .orange
-    case "recurrence": .pink
-    default: .gray
-    }
+    Tokens.Colors.span(kind)
 }
 
 /// `text` with each span's background tinted by its kind.
