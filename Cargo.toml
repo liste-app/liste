@@ -40,12 +40,16 @@ sqlx = { version = "0.9.0", default-features = false, features = [
     "time",
 ] }
 
-# Cryptography (Section 7). Audited RustCrypto crates only.
-chacha20poly1305 = "0.11.0"
-x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
-ed25519-dalek = { version = "3.0.0", features = ["rand_core"] }
-hkdf = "0.13.0"
-sha2 = "0.11.0"
+# Cryptography (Section 7). Audited RustCrypto and dalek crates only, pinned
+# exactly; a bump is a deliberate, reviewed change.
+chacha20poly1305 = "=0.11.0"
+x25519-dalek = { version = "=3.0.0", features = ["static_secrets", "zeroize"] }
+ed25519-dalek = { version = "=3.0.0", features = ["zeroize"] }
+hkdf = "=0.13.0"
+sha2 = "=0.11.0"
+zeroize = { version = "=1.9.0", features = ["derive"] }
+subtle = "=2.6.1"
+getrandom = "=0.4.3"
 
 # Bindings (Section 14). Held at the 0.31 line so that uniffi-bindgen-cs
 # (currently v0.11.0+v0.31.0) stays in lockstep for the Windows app.

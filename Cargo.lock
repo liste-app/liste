@@ -506,7 +506,6 @@ dependencies = [
  "curve25519-dalek-derive",
  "digest 0.11.3",
  "fiat-crypto",
- "rand_core 0.10.1",
  "rustc_version",
  "subtle",
  "zeroize",
@@ -621,9 +620,7 @@ checksum = "6ebaa1a2bf1290ab3bfe5a7b771d050ebffab2711c19a81691c683a5144a25de"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
- "rand_core 0.10.1",
  "sha2 0.11.0",
- "signature",
  "subtle",
  "zeroize",
 ]
@@ -1285,9 +1282,11 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "sqlite-wasm-vfs",
+ "subtle",
  "thiserror",
  "uuid",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -2046,9 +2045,6 @@ name = "signature"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
-dependencies = [
- "rand_core 0.10.1",
-]
 
 [[package]]
 name = "siphasher"
@@ -3150,6 +3146,20 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "zerotrie"
