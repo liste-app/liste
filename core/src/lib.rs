@@ -9,6 +9,7 @@
 //! See `docs/ARCHITECTURE.md` for the design and decision record.
 
 pub mod crypto;
+pub mod fractional;
 pub mod hlc;
 pub mod host;
 pub mod ids;
