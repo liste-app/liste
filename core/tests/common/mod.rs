@@ -9,3 +9,15 @@ pub fn pending(suite: &str, case: &str) -> ! {
         "{suite}: `{case}` is specified in docs/ARCHITECTURE.md Section 15 but not implemented yet"
     )
 }
+
+/// A fresh directory under the system temp dir for file-backed stores.
+#[allow(dead_code)]
+pub fn temp_dir(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("liste-{label}-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}

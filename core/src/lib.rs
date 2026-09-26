@@ -18,7 +18,6 @@ pub mod model;
 pub mod op;
 pub mod parse;
 pub mod recurrence;
-pub mod search;
 pub mod store;
 pub mod sync;
 pub mod undo;

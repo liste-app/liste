@@ -61,10 +61,16 @@ pub enum Mutation {
     },
 }
 
-/// Why an op could not be decoded.
+/// Why an op or snapshot could not be decoded.
 #[derive(Debug, thiserror::Error)]
-#[error("cannot decode op: {0}")]
+#[error("cannot decode: {0}")]
 pub struct DecodeError(String);
+
+impl From<serde_json::Error> for DecodeError {
+    fn from(e: serde_json::Error) -> Self {
+        DecodeError(e.to_string())
+    }
+}
 
 impl Op {
     /// The stable byte encoding written to the log and sent to the server.
@@ -74,7 +80,7 @@ impl Op {
 
     /// Decode bytes produced by [`encode`](Self::encode), by any version.
     pub fn decode(bytes: &[u8]) -> Result<Op, DecodeError> {
-        serde_json::from_slice(bytes).map_err(|e| DecodeError(e.to_string()))
+        serde_json::from_slice(bytes).map_err(DecodeError::from)
     }
 
     /// Whether this build can apply the op's mutation.
