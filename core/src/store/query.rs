@@ -555,6 +555,7 @@ pub(super) fn window_plan(conn: &Connection, space_id: Id) -> Result<Vec<String>
         "SELECT count(*) FROM tasks WHERE tasks.space_id = ?1 AND tasks.list_id = ?1 AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL",
         "SELECT id FROM tasks WHERE tasks.space_id = ?1 AND tasks.due_at >= 1 AND tasks.due_at < 5 AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL ORDER BY due_at, sort_key, id LIMIT 10",
         "SELECT DISTINCT status FROM tasks WHERE space_id = ?1 AND completed_at IS NULL AND deleted_at IS NULL ORDER BY status",
+        "SELECT id FROM tasks WHERE tasks.space_id = ?1 AND tasks.reminder_at IS NOT NULL AND tasks.completed_at IS NULL AND tasks.deleted_at IS NULL ORDER BY sort_key, id",
     ] {
         let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
         let rows: Vec<String> = stmt

@@ -715,6 +715,7 @@ fn window_plans_come_off_the_partial_indexes() {
         "USING INDEX tasks_space_list_open (space_id=? AND list_id=?)",
         "USING INDEX tasks_space_due_open (space_id=? AND due_at>? AND due_at<?)",
         "USING INDEX tasks_space_status_open (space_id=?)",
+        "USING INDEX tasks_space_reminder_open (space_id=?)",
     ];
     for (plan, expected) in plans.iter().zip(expect) {
         assert!(plan.contains(expected), "expected {expected} in:\n{plan}");

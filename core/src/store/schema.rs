@@ -166,6 +166,8 @@ pub const MIGRATIONS: &[&str] = &[
         WHERE completed_at IS NULL AND deleted_at IS NULL;
     CREATE INDEX tasks_space_status_open ON tasks (space_id, status)
         WHERE completed_at IS NULL AND deleted_at IS NULL;
+    CREATE INDEX tasks_space_reminder_open ON tasks (space_id, sort_key, id)
+        WHERE reminder_at IS NOT NULL AND completed_at IS NULL AND deleted_at IS NULL;
     CREATE TEMP TABLE outline AS
         WITH RECURSIVE walk(id, key, depth) AS (
             SELECT id, position || '.' || hex(id), 0 FROM tasks
